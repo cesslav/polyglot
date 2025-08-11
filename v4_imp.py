@@ -5,15 +5,14 @@ import math
 
 
 def tokenize_fn(example, src_lang, tgt_lang, max_len, tokenizer):
-    src_text = example["translation"][src_lang]
-    tgt_text = example["translation"][tgt_lang]
-    src = tokenizer(src_text, truncation=True, padding='max_length', max_length=max_len, return_tensors="pt")
-    tgt = tokenizer(tgt_text, truncation=True, padding='max_length', max_length=max_len, return_tensors="pt")
+    src = tokenizer(example["translation"][src_lang], truncation=True, padding='max_length', max_length=max_len, return_tensors="pt")
+    tgt = tokenizer(example["translation"][tgt_lang], truncation=True, padding='max_length', max_length=max_len, return_tensors="pt")
     return {
         'input_ids': src['input_ids'].squeeze(),
         'attention_mask': src['attention_mask'].squeeze(),
         'labels': tgt['input_ids'].squeeze()
     }
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -30,6 +29,7 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[:, :x.size(1), :]
         return x
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads):
@@ -71,6 +71,7 @@ class MultiHeadAttention(nn.Module):
 
         return self.out_proj(context)
 
+
 class FeedForward(nn.Module):
     def __init__(self, d_model, d_ff):
         super().__init__()
@@ -79,6 +80,7 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.linear2(F.relu(self.linear1(x)))
+
 
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout):
@@ -97,6 +99,7 @@ class EncoderLayer(nn.Module):
         x = x + self.dropout(x2)
         x = self.norm2(x)
         return x
+
 
 class DecoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout):
@@ -123,9 +126,6 @@ class DecoderLayer(nn.Module):
         x = self.norm3(x)
         return x
 
-def generate_subsequent_mask(size, device):
-    mask = torch.tril(torch.ones(size, size)).unsqueeze(0).unsqueeze(0)
-    return mask.to(device)
 
 class Transformer(nn.Module):
     def __init__(self, vocab_size, d_model, n_heads, num_layers, ff_dim, dropout):
@@ -142,7 +142,13 @@ class Transformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.d_model = d_model
 
-    def forward(self, src, tgt, src_mask, tgt_mask):
+    def generate_subsequent_mask(self, size, device):
+        mask = torch.tril(torch.ones(size, size)).unsqueeze(0).unsqueeze(0)
+        return mask.to(device)
+
+    def forward(self, src, tgt, pad_token, device):
+        src_mask = (src != pad_token).unsqueeze(1).unsqueeze(2)
+        tgt_mask = self.generate_subsequent_mask(tgt.size(1), device)
         src = self.embedding(src) * math.sqrt(self.d_model)
         src = self.pos_encoder(src)
         for layer in self.encoder_layers:
