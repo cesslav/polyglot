@@ -1,0 +1,7 @@
+*.arrow
+/sources/s1024_full/
+/sources/s1024_val/
+.gitignore
+*.onnx
+*.pt
+/.idea

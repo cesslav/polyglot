@@ -1,3 +1,4 @@
+import sys
 import time
 from datetime import datetime, timedelta
 import torch
@@ -255,6 +256,14 @@ with open("train_config.txt", "r") as config_file:
         train_loss = checkpoint["train_loss"]
         start_epoch = checkpoint["epoch"] - 1
         vocab_size = config["vocab_size"]
+    try:
+        train_loader = DataLoader(load_from_disk(config_file.readline()), batch_size=batch_size, shuffle=True,
+                                  num_workers=16, pin_memory=True)
+        val_loader = DataLoader(load_from_disk(config_file.readline()), batch_size=batch_size, num_workers=12,
+                                pin_memory=True)
+    except Exception as e:
+        print(e)
+        sys.exit(1)
 
 criterion = nn.CrossEntropyLoss(ignore_index=3, label_smoothing=0.1)
 
@@ -264,10 +273,6 @@ print(torch.cuda.memory_allocated() / 1024**3)
 
 time.sleep(0.5)
 last_save = datetime.now()
-
-train_loader = DataLoader(load_from_disk("./sources/s1024_full"), batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
-val_loader = DataLoader(load_from_disk("./sources/s1024_val"), batch_size=batch_size, num_workers=12, pin_memory=True)
-
 
 for epoch in range(start_epoch+1, num_epochs + 1):
     if progress < 0.9:
