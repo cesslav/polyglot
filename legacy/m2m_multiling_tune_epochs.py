@@ -73,15 +73,15 @@ def loadmdl(initmdl, newnum):
 
 if __name__ == "__main__":
 	# _, outdir = sys.argv
-	outdir = "./content/"
+	outdir = "./checkpoints_1024/"
 
 	log("Load model")
 	tokenizer = M2M100Tokenizer.from_pretrained("facebook/m2m100_1.2B", trust_remote_code=True)
 	model = loadmdl("facebook/m2m100_1.2B", len(tokenizer)).to("cuda")  # facebook/m2m100_1.2B
-	# tokenizer = AutoTokenizer.from_pretrained("facebook/m2m100-12B-avg-5-ckpt", trust_remote_code=True, use_fast=False)
+	# ru_tokenizer = AutoTokenizer.from_pretrained("facebook/m2m100-12B-avg-5-ckpt", trust_remote_code=True, use_fast=False)
 	# model = AutoModelForSeq2SeqLM.from_pretrained("facebook/m2m100-12B-avg-5-ckpt").to("cuda")  # facebook/m2m100_1.2B
 	# model = FSMTForConditionalGeneration.from_pretrained("facebook/wmt19-ru-en").to("cuda")
-	# tokenizer = FSMTTokenizer.from_pretrained("facebook/wmt19-ru-en")
+	# ru_tokenizer = FSMTTokenizer.from_pretrained("facebook/wmt19-ru-en")
 
 
 	log("Load dataset")
@@ -104,7 +104,7 @@ if __name__ == "__main__":
 		with tokenizer.as_target_tokenizer():
 			labels = tokenizer(outs, max_length=512, padding=True, truncation=True)
 
-		result['labels'] = labels['input_ids']
+		result['target_ids'] = labels['input_ids']
 		
 		return result
 
