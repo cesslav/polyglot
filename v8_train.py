@@ -90,7 +90,6 @@ def init_weights(m):
 
 def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss=0, progress=0):
     global last_save, config
-    # print(datetime.now())
     checkpoint = {
         'epoch': epoch,
         'progress': progress,
@@ -157,95 +156,107 @@ def evaluate(model, loader, criterion, device):
 
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-batch_size = 8
-num_epochs = 200
-base_lr = 2e-4            # lr для top (последних) слоёв / head
-lr_decay = 0.85            # множитель снижения lr для каждого шага глубины
-
-checkpoint_dir = "./t5m" # "t5xs"
-checkpoint_name = ""
-os.makedirs(checkpoint_dir, exist_ok=True)
-criterion = nn.CrossEntropyLoss(ignore_index=3, label_smoothing=0.1)
-
-
-
-if checkpoint_name:
-    checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False)
-    config = checkpoint["config"]
-    # transformer = Transformer(config["src_vocab_size"], config["tgt_vocab_size"], config["d_model"], config["num_heads"], config["num_layers"], config["d_ff"], config["max_seq_length"], 0.2).to(device)
-    transformer = Transformer(
-        dim=config["d_model"],
-        # max_seq_len = 1024,
-        enc_num_tokens=config["vocab_size"],
-        enc_depth=config["num_layers"],
-        enc_heads=config["num_heads"],
-        enc_dim_head=config["dim_head"],
-        enc_mlp_mult=config["mlp_mult"],
-        dec_num_tokens=config["vocab_size"],
-        dec_depth=config["num_layers"]+2,
-        dec_heads=config["num_heads"],
-        dec_dim_head=config["dim_head"],
-        dec_mlp_mult=config["mlp_mult"],
-        dropout=config["dropout"],
-        tie_token_emb=True
-    ).to(device)
-
-    param_groups = get_transformer_lrd(transformer, base_lr=base_lr, decay=lr_decay)
-    optimizer = optim.Adam(param_groups, betas=(0.9, 0.98), eps=1e-9)  # , lr=1e-4
-    scheduler = get_transformer_scheduler(optimizer, warmup_steps=12000)
-    # torch.autograd.set_detect_anomaly(True)
-    # optimizer = optim.Adam(transformer.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
-    # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-    scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-    transformer.load_state_dict(checkpoint["model_state_dict"])
-    progress = checkpoint["progress"]
-    train_loss = checkpoint["train_loss"]
-    start_epoch = checkpoint["epoch"]
-    vocab_size = config["vocab_size"]
-
-else:
-    dim = 896
-    vocab_size = 48000
-    layers = 6
-    dim_head = 96
-    heads = int(dim / dim_head)
-    mlp_mult = 10
-    dropout = 0.15
-    progress = 0
-
-    config = {
-        "vocab_size": vocab_size,
-        "d_model": dim,
-        "mlp_mult": mlp_mult,
-        "num_heads": heads,
-        "dim_head": dim_head,
-        "num_layers": layers,
-        "dropout": dropout
+config = {
+        "d_model": 256,
+        "vocab_size": 48000,
+        "num_layers": 4,
+        "dec_depth_diff": 0,
+        "dim_head": 32,
+        "num_heads": 0,
+        "mlp_mult": 4,
+        "dropout": 0
     }
 
-    transformer = Transformer(
-        dim=dim,
-        enc_num_tokens=vocab_size,
-        enc_depth=layers,
-        enc_heads=heads,
-        enc_dim_head=dim_head,
-        enc_mlp_mult=mlp_mult,
-        dec_num_tokens=vocab_size,
-        dec_depth=layers+2,
-        dec_heads=heads,
-        dec_dim_head=dim_head,
-        dec_mlp_mult=mlp_mult,
-        dropout=dropout,
-        tie_token_emb=True
-    ).to(device)
+with open("train_config.txt", "r") as config_file:
+    is_continue = int(config_file.readline())
+    checkpoint_dir = config_file.readline()
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_name = config_file.readline()
+    if not (checkpoint_name and os.path.isfile(checkpoint_dir + checkpoint_name)):
+        is_continue = 0
+        checkpoint_name = ""
+    try:
+        batch_size = int(config_file.readline())
+    except Exception as e:
+        batch_size = 1
 
+    try:
+        num_epochs = int(config_file.readline())
+    except Exception as e:
+        num_epochs = 200
+    if not is_continue:
+        try:
+            batch_size = int(config_file.readline())
+        except Exception as e:
+            base_lr = 1e-3
 
-    param_groups = get_transformer_lrd(transformer, base_lr=base_lr, decay=lr_decay)
-    optimizer = optim.Adam(param_groups, betas=(0.9, 0.98), eps=1e-9)  # transformer.parameters(), lr=1e-4
-    scheduler = get_transformer_scheduler(optimizer, warmup_steps=30000)
-    # torch.autograd.set_detect_anomaly(True)
-    transformer.apply(init_weights)
-    start_epoch = 0
+        try:
+            lr_decay = int(config_file.readline())
+        except Exception as e:
+            lr_decay = 0.85
+
+        for key in config.keys():
+            try:
+                config[key] = int(config_file.readline())
+            except Exception as e:
+                pass
+
+        if config["num_heads"] == 0:
+            config["num_heads"] = config["d_model"] // config["dim_heads"]
+        transformer = Transformer(
+            dim=config["d_model"],
+            enc_num_tokens=config["vocab_size"],
+            enc_depth=config["num_layers"],
+            enc_heads=config["num_heads"],
+            enc_dim_head=config["dim_head"],
+            enc_mlp_mult=config["mlp_mult"],
+            dec_num_tokens=config["vocab_size"],
+            dec_depth=config["num_layers"] + config["dec_depth_diff"],
+            dec_heads=config["num_heads"],
+            dec_dim_head=config["dim_head"],
+            dec_mlp_mult=config["mlp_mult"],
+            dropout=config["dropout"],
+            tie_token_emb=True
+        ).to(device)
+
+        param_groups = get_transformer_lrd(transformer, base_lr=base_lr, decay=lr_decay)
+        optimizer = optim.Adam(param_groups, betas=(0.9, 0.98), eps=1e-9)
+        scheduler = get_transformer_scheduler(optimizer, warmup_steps=30000)
+        transformer.apply(init_weights)
+        start_epoch = 0
+
+    else:
+        checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False)
+        config = checkpoint["config"]
+
+        transformer = Transformer(
+            dim=config["d_model"],
+            enc_num_tokens=config["vocab_size"],
+            enc_depth=config["num_layers"],
+            enc_heads=config["num_heads"],
+            enc_dim_head=config["dim_head"],
+            enc_mlp_mult=config["mlp_mult"],
+            dec_num_tokens=config["vocab_size"],
+            dec_depth=config["num_layers"] + config["dec_depth_diff"],
+            dec_heads=config["num_heads"],
+            dec_dim_head=config["dim_head"],
+            dec_mlp_mult=config["mlp_mult"],
+            dropout=config["dropout"],
+            tie_token_emb=True
+        ).to(device)
+
+        param_groups = get_transformer_lrd(transformer, base_lr=1, decay=1)
+        optimizer = optim.Adam(param_groups, betas=(0.9, 0.98), eps=1e-9)
+        scheduler = get_transformer_scheduler(optimizer, warmup_steps=12000)
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        transformer.load_state_dict(checkpoint["model_state_dict"])
+        progress = checkpoint["progress"]
+        train_loss = checkpoint["train_loss"]
+        start_epoch = checkpoint["epoch"] - 1
+        vocab_size = config["vocab_size"]
+
+criterion = nn.CrossEntropyLoss(ignore_index=3, label_smoothing=0.1)
 
 
 print(sum([p.numel() for p in transformer.parameters() if p.requires_grad]) / 1000000000)
@@ -254,11 +265,7 @@ print(torch.cuda.memory_allocated() / 1024**3)
 time.sleep(0.5)
 last_save = datetime.now()
 
-# train_dataset = load_from_disk("/home/trashdata/sources/s1024_full")
-# test_dataset = load_from_disk("/home/trashdata/sources/s1024_val")
-
 train_loader = DataLoader(load_from_disk("./sources/s1024_full"), batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
-# train_loader = DataLoader(load_from_disk("/home/trashdata/sources/s1024_val"), batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
 val_loader = DataLoader(load_from_disk("./sources/s1024_val"), batch_size=batch_size, num_workers=12, pin_memory=True)
 
 
@@ -273,4 +280,6 @@ for epoch in range(start_epoch+1, num_epochs + 1):
 
     save(transformer, epoch, optimizer, train_loss, val_loss)
 
-#  0%|          | 7999/4748169 [49:07<483:59:26,  2.72it/s, loss: 6.638919, avg_loss: 7.881477  6.805798  8.069850, since_last_save: 0:54:44.756761]
+#  0%|          | 07999/4748169 [49:07<483:59:26,  2.72it/s, loss: 6.638919, avg_loss: 7.881477  6.805798  8.069850, since_last_save: 0:54:44.756761]
+#  1%|▏         | 65674/4748169 [6:43:58<478:35:36,  2.72it/s, loss: 4.745714, avg_loss: 5.689210  4.798008  6.749017, since_last_save: 0:49:35.144575]
+#  2%|▏         | 98716/4748169 [10:07:54<474:45:39,  2.72it/s, loss: 4.973775, avg_loss: 5.354921  4.587919  6.568014, since_last_save: 0:13:30.775095]
