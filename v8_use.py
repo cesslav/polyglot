@@ -69,19 +69,19 @@ torch.cuda.empty_cache()
 bos = 0
 eos = 1
 pad = 3
+max_len = 256
+beam_size = 4
 
-text = """Привет, как поживаешь?"""
 
-src = tokenizer(text, truncation=True, padding='max_length', max_length=512, return_tensors="pt")["input_ids"].to(device)
-p_threshold = 0.1
-max_len = 128
-
-print("Input:")
-print(tokenizer.decode(src[0], skip_special_tokens=True))
-for i in range(1):
-    with torch.no_grad():
-        tgt = torch.tensor([[bos]], device=device)
-        enc = transformer.encoder(src)
-        output = beam_search(transformer, tokenizer, src, beam_size=8, device=device)
-        print("Output:")
-        print(output)
+while True:
+    print("Input:")
+    text = input()
+    src = tokenizer(text, truncation=True, padding='max_length', max_length=512, return_tensors="pt")["input_ids"].to(device)
+    print(tokenizer.decode(src[0], skip_special_tokens=True))
+    for i in range(1):
+        with torch.no_grad():
+            tgt = torch.tensor([[bos]], device=device)
+            enc = transformer.encoder(src)
+            output = beam_search(transformer, tokenizer, src, beam_size=beam_size, device=device)
+            print("Output:")
+            print(output)
