@@ -8,12 +8,12 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 from v8_imp import Transformer
 
-TOKEN = "7991454522:AAFm4tWsTglDNBGcfYPTCqcyFx-zdZktqig"
+TOKEN = "Telegram Bot Token"
 
-device = "cpu" # "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ---------- загрузка токенизатора ----------
-tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
+tokenizer = AutoTokenizer.from_pretrained("./tokenizer")
 
 # ---------- загрузка модели ----------
 checkpoint_dir = "t5s"
