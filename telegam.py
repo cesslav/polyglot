@@ -8,7 +8,7 @@ import numpy as np
 import onnxruntime as ort
 
 
-TOKEN = "Telegram Bot Token"
+TOKEN = input("Введите токен API телеграма для своего бота: ")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 

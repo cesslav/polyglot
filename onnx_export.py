@@ -1,5 +1,3 @@
-import sys
-
 import torch
 import os
 import onnx
@@ -19,7 +17,6 @@ def export_fp32(model, config, save_dir):
     device = "cpu"
     model = model.to(device)
 
-    # --- Encoder ---
     dummy_src = torch.randint(0, config["vocab_size"], (2, 16))
 
     torch.onnx.export(
