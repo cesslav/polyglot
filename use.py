@@ -32,7 +32,7 @@ def beam_search(transformer, tokenizer, src, beam_size=10, max_len=256, device="
             if all(seq[0, -1].item() == eos for seq, _ in beams):
                 break
         best_seq = beams[0][0]
-    return tokenizer.decode(best_seq[0])
+    return tokenizer.decode(best_seq[0], skip_special_tokens=True)
 
 
 tokenizer = AutoTokenizer.from_pretrained("./tokenizer/")
@@ -53,7 +53,7 @@ transformer = Transformer(
     enc_dim_head=config["dim_head"],
     enc_mlp_mult=config["mlp_mult"],
     dec_num_tokens=config["vocab_size"],
-    dec_depth=config["num_layers"],
+    dec_depth=config["num_layers"] + config["dec_depth_diff"],
     dec_heads=config["num_heads"],
     dec_dim_head=config["dim_head"],
     dec_mlp_mult=config["mlp_mult"],
@@ -77,7 +77,6 @@ while True:
     print("Input:")
     text = input()
     src = tokenizer(text, truncation=True, padding='max_length', max_length=512, return_tensors="pt")["input_ids"].to(device)
-    print(tokenizer.decode(src[0], skip_special_tokens=True))
     for i in range(1):
         with torch.no_grad():
             tgt = torch.tensor([[bos]], device=device)
