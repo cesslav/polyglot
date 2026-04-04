@@ -284,9 +284,3 @@ for epoch in range(start_epoch+1, num_epochs + 1):
     print(torch.cuda.memory_allocated() / 1024 ** 3)
 
     save(transformer, epoch, optimizer, train_loss, val_loss)
-
-#  0%|          | 07999/4748169 [49:07<483:59:26,  2.72it/s, loss: 6.638919, avg_loss: 7.881477  6.805798  8.069850, since_last_save: 0:54:44.756761]
-#  1%|▏         | 65674/4748169 [6:43:58<478:35:36,  2.72it/s, loss: 4.745714, avg_loss: 5.689210  4.798008  6.749017, since_last_save: 0:49:35.144575]
-#  2%|▏         | 98716/4748169 [10:07:54<474:45:39,  2.72it/s, loss: 4.973775, avg_loss: 5.354921  4.587919  6.568014, since_last_save: 0:13:30.775095]
-#  3%|▎         | 148276/4748169 [15:12:23<470:17:55,  2.72it/s, loss: 5.048064, avg_loss: 5.068608  4.414128  6.118077, since_last_save: 1:17:59.751966]
-#  5%|▍         | 215973/4748169 [22:08:29<462:35:44,  2.72it/s, loss: 4.551724, avg_loss: 4.839734  4.271551  6.374187, since_last_save: 0:14:04.886637]

@@ -115,7 +115,7 @@ def load_model(checkpoint_path):
         enc_dim_head=config["dim_head"],
         enc_mlp_mult=config["mlp_mult"],
         dec_num_tokens=config["vocab_size"],
-        dec_depth=config["num_layers"],
+        dec_depth=config["num_layers"] + config["dec_depth_diff"],
         dec_heads=config["num_heads"],
         dec_dim_head=config["dim_head"],
         dec_mlp_mult=config["mlp_mult"],
@@ -129,7 +129,7 @@ def load_model(checkpoint_path):
 
 if __name__ == "__main__":
     save_dir = "onnx_export"
-    checkpoint = "transformer.pt"
+    checkpoint = "./t5m/transformer_epoch_1.pt"
 
     model, config = load_model(checkpoint)
 
