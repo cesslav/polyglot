@@ -1,4 +1,7 @@
-from transformers import AutoTokenizer
+# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
+print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
+
+
 from datasets import load_dataset
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders, processors
 

@@ -1,3 +1,7 @@
+# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
+print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
+
+
 import onnxruntime as ort
 import numpy as np
 from flask import Flask, request, jsonify, render_template_string

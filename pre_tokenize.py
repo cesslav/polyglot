@@ -1,3 +1,7 @@
+# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
+print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
+
+
 from transformers import AutoTokenizer
 from datasets import load_dataset,concatenate_datasets
 import torch
