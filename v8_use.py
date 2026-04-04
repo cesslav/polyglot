@@ -35,11 +35,11 @@ def beam_search(transformer, tokenizer, src, beam_size=10, max_len=256, device="
     return tokenizer.decode(best_seq[0])
 
 
-tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
+tokenizer = AutoTokenizer.from_pretrained("./tokenizer/")
 
 checkpoint_dir = "./"
-checkpoint_name = "transformer_epoch_4.pt"
-device =  "cpu"
+checkpoint_name = "transformer.pt"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False, map_location=device)

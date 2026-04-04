@@ -3,8 +3,6 @@ import torch
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.types import Message
-from aiogram.client.session.aiohttp import AiohttpSession
-from tqdm import tqdm
 from transformers import AutoTokenizer
 from v8_imp import Transformer
 
@@ -12,19 +10,16 @@ TOKEN = "Telegram Bot Token"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ---------- загрузка токенизатора ----------
 tokenizer = AutoTokenizer.from_pretrained("./tokenizer")
 
-# ---------- загрузка модели ----------
-checkpoint_dir = "t5s"
-checkpoint_name = "transformer_epoch_1.pt"
+
+checkpoint_dir = "./"
+checkpoint_name = "transformer.pt"
 
 checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False, map_location=device)
 config = checkpoint["config"]
-# transformer = Transformer(config["src_vocab_size"], config["tgt_vocab_size"], config["d_model"], config["num_heads"], config["num_layers"], config["d_ff"], config["max_seq_length"], 0.2).to(device)
 model = Transformer(
     dim=config["d_model"],
-    # max_seq_len = 1024,
     enc_num_tokens=config["vocab_size"],
     enc_depth=config["num_layers"],
     enc_heads=config["num_heads"],
@@ -44,34 +39,41 @@ model.eval()
 bos = 0
 eos = 1
 pad = 3
+beam_size = 4
 
-# ---------- функция генерации ----------
 
-def generate(text, max_len=128):
-
-    src = tokenizer(text, truncation=True, padding='max_length', max_length=512, return_tensors="pt")["input_ids"].to(device)
-    print(text)
-
+def beam_search(transformer, tokenizer, src, beam_size=10, max_len=256, device="cpu"):
+    bos, eos = 0, 1
     with torch.no_grad():
-        tgt = torch.tensor([[bos]], device=device)
-        enc = model.encoder(src)
+        enc = transformer.encoder(src)
+        # (sequence, score)
+        beams = [(torch.tensor([[bos]], device=device), 0.0)]
         for _ in range(max_len):
-            dec = model.decoder(tgt, enc)
-            logits = model.to_logits(dec)
-            next_token_logits = logits[:, -1, :]
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-            tgt = torch.cat([tgt, next_token], dim=1)
-            if next_token.item() == eos:
+            new_beams = []
+            for seq, score in beams:
+                if seq[0, -1].item() == eos:
+                    new_beams.append((seq, score))
+                    continue
+                dec = transformer.decoder(seq, enc)
+                logits = transformer.to_logits(dec)
+                next_token_logits = logits[:, -1, :]
+                log_probs = torch.log_softmax(next_token_logits, dim=-1)
+                topk_log_probs, topk_tokens = torch.topk(log_probs, beam_size, dim=-1)
+                for k in range(beam_size):
+                    next_token = topk_tokens[0, k].unsqueeze(0).unsqueeze(0)
+                    new_seq = torch.cat([seq, next_token], dim=1)
+                    new_score = score + topk_log_probs[0, k].item()
+                    new_beams.append((new_seq, new_score))
+            # сортируем по score
+            beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
+            # если все завершены — стоп
+            if all(seq[0, -1].item() == eos for seq, _ in beams):
                 break
-    a = tokenizer.decode(tgt[0], skip_special_tokens=True)
-    print(a)
-    return a  #
+        best_seq = beams[0][0]
+    return tokenizer.decode(best_seq[0])
 
 
-# ---------- aiogram ----------
-# session = AiohttpSession(proxy="http://s5.wyckoff.one:443")
-
-bot = Bot(TOKEN)   # , session=session
+bot = Bot(TOKEN)
 dp = Dispatcher()
 
 
@@ -82,11 +84,12 @@ async def start(message: Message):
 
 @dp.message()
 async def translate(message: Message):
-
     text = message.text
 
     try:
-        translation = generate(text)
+        src = tokenizer(text, truncation=True, padding='max_length', max_length=512, return_tensors="pt")[
+            "input_ids"].to(device)
+        translation = beam_search(model, tokenizer, src, beam_size=beam_size, device=device)
 
         await message.answer(translation)
 
@@ -94,7 +97,6 @@ async def translate(message: Message):
         await message.answer(f"Ошибка перевода: {e}")
 
 
-# ---------- запуск ----------
 
 if __name__ == "__main__":
     import asyncio

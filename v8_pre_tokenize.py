@@ -1,15 +1,17 @@
 from transformers import AutoTokenizer
-from datasets import load_dataset,concatenate_datasets, load_from_disk, Dataset
+from datasets import load_dataset,concatenate_datasets
 import torch
 
 tensor_size = 512
-tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
+tokenizer = AutoTokenizer.from_pretrained("./tokenizer/")
+SRC_LANG = "rus_Cyrl"
+TGT_LANG = "eng_Latn"
 
 
 def tokenization_fine(example, num):
     return {
-        "input": tokenizer(example['translation']["ru"], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"],
-        "output": tokenizer(example['translation']["en"], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"]
+        "input": tokenizer(example['translation'][SRC_LANG[0:2]], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"],
+        "output": tokenizer(example['translation'][TGT_LANG[0:2]], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"]
     }
 
 
@@ -23,11 +25,11 @@ def tokenization_flores(example, num):
 def tokenization_tatoeba(example, num):
     lang_src = example["lang_src"]
     lang_tgt = example["lang_tgt"]
-    if lang_src == "rus" and lang_tgt == "eng":
+    if lang_src == SRC_LANG[0:3] and lang_tgt == TGT_LANG[0:3]:
         return {
             "input": tokenizer(example["sentence_src"], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"],
             "output": tokenizer(example["sentence_tgt"], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"]}
-    elif lang_src == "eng" and lang_tgt == "rus":
+    elif lang_src == TGT_LANG[0:3] and lang_tgt == SRC_LANG[0:3]:
         return {
             "input": tokenizer(example["sentence_tgt"], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"],
             "output": tokenizer(example["sentence_src"], return_tensors="pt", padding="max_length", max_length=tensor_size)["input_ids"]}
@@ -42,7 +44,7 @@ def length_filter(example):
     return example["input"].size(1) == tensor_size and example["output"].size(1) == tensor_size
 
 
-ds_fine = load_dataset("wmt/wmt19", "ru-en", split="train", cache_dir="/home/trashdata/HF/cache")  # , cache_dir="/home/trashdata/HF/cache"
+ds_fine = load_dataset("wmt/wmt19", f"{SRC_LANG[0:2]}-{TGT_LANG[0:2]}", split="train", cache_dir="/home/trashdata/HF/cache")  # , cache_dir="/home/trashdata/HF/cache"
 print(ds_fine)
 main_dataset = ds_fine.map(tokenization_fine, num_proc=20, with_indices=True)
 main_dataset.set_format(type="torch", columns=["input", "output"])
@@ -59,10 +61,6 @@ train_dataset = concatenate_datasets([main_dataset, short_dataset])
 train_dataset.save_to_disk("/home/trashdata/sources/s1024_full")
 
 
-
-SRC_LANG = "rus_Cyrl"
-TGT_LANG = "eng_Latn"
-
 ds = [load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="dev", cache_dir="/home/trashdata/HF/cache"),
       load_dataset("openlanguagedata/flores_plus", f"{TGT_LANG}", split="dev", cache_dir="/home/trashdata/HF/cache"),
       load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="devtest", cache_dir="/home/trashdata/HF/cache"),
@@ -75,9 +73,6 @@ dataset1.set_format(type="torch", columns=["input", "output"])
 pairs = [2, 3]
 dataset2 = load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="devtest", cache_dir="/home/trashdata/HF/cache").map(tokenization_flores, num_proc=16, with_indices=True)
 dataset2.set_format(type="torch", columns=["input", "output"])
-
 eval_dataset = concatenate_datasets([dataset1, dataset2])
 eval_dataset.save_to_disk("./sources/s1024_val")
-
-
 eval_dataset.save_to_disk("/home/trashdata/sources/s1024_short_full")

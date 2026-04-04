@@ -4,10 +4,6 @@ import torch
 from transformers import AutoTokenizer
 
 
-# =========================
-# 1. Загрузка моделей
-# =========================
-
 class ONNXTransformer:
     def __init__(self, encoder_path, decoder_path, device="cpu"):
         providers = ["MIGraphXExecutionProvider"]
@@ -38,10 +34,6 @@ class ONNXTransformer:
         logits = self.decoder.run(["logits"], inputs)[0]
         return logits
 
-
-# =========================
-# 2. Beam Search (как у тебя)
-# =========================
 
 def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
     bos, eos = 0, 1
@@ -84,46 +76,36 @@ def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
     return tokenizer.decode(best_seq[0], skip_special_tokens=True)
 
 
-# =========================
-# 3. Softmax helper (numpy)
-# =========================
-
 def np_softmax(x):
     x = x - np.max(x, axis=-1, keepdims=True)
     exp = np.exp(x)
     return exp / np.sum(exp, axis=-1, keepdims=True)
 
 
-# monkey patch (чтобы не тянуть scipy)
 np.log_softmax = lambda x, axis: np.log(np_softmax(x))
 
 
-# =========================
-# 4. Запуск
-# =========================
-
 if __name__ == "__main__":
-    tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
-
+    tokenizer = AutoTokenizer.from_pretrained("./tokenizer/")
     model = ONNXTransformer(
-        encoder_path="onnx_export/encoder_fp32.onnx",
-        decoder_path="onnx_export/decoder_fp32.onnx"
+        encoder_path="./encoder.onnx",
+        decoder_path="./decoder.onnx"
     )
 
     text = "Если завтра выпадет снег, дороги станут скользкими."
+    while True:
+        print("Input:")
+        text = input()
+        src = tokenizer(
+            text,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=256
+        )["input_ids"]
 
-    src = tokenizer(
-        text,
-        return_tensors="pt",
-        padding="max_length",
-        truncation=True,
-        max_length=256
-    )["input_ids"]
+        print(tokenizer.decode(src[0], skip_special_tokens=True))
+        output = beam_search_onnx(model, tokenizer, src, beam_size=10)
 
-    print("Input:")
-    print(tokenizer.decode(src[0], skip_special_tokens=True))
-
-    output = beam_search_onnx(model, tokenizer, src, beam_size=1)
-
-    print("\nOutput:")
-    print(output)
+        print("\nOutput:")
+        print(output)

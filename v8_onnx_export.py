@@ -12,10 +12,6 @@ from onnxruntime.quantization import (
 )
 
 
-# =========================
-# 1. Export (FP32)
-# =========================
-
 def export_fp32(model, config, save_dir):
     os.makedirs(save_dir, exist_ok=True)
 
@@ -40,7 +36,6 @@ def export_fp32(model, config, save_dir):
         dynamo=False
     )
 
-    # --- Decoder ---
     class DecoderWrapper(torch.nn.Module):
         def __init__(self, model):
             super().__init__()
@@ -74,12 +69,8 @@ def export_fp32(model, config, save_dir):
         dynamo=False
     )
 
-    print("✅ FP32 export done")
+    print("FP32 export done")
 
-
-# =========================
-# 2. Найти FF слои в ONNX
-# =========================
 
 def get_ff_matmul_nodes(onnx_path):
     model = onnx.load(onnx_path)
@@ -87,9 +78,7 @@ def get_ff_matmul_nodes(onnx_path):
     ff_nodes = []
 
     for node in model.graph.node:
-        # FeedForward = MatMul после SiLU
         if node.op_type == "MatMul":
-            # эвристика: исключаем attention
             name = node.name.lower()
 
             if "to_qkv" in name:
@@ -102,14 +91,10 @@ def get_ff_matmul_nodes(onnx_path):
     return ff_nodes
 
 
-# =========================
-# 3. Quantization (ONNX)
-# =========================
-
 def quantize_onnx(input_path, output_path):
     nodes = get_ff_matmul_nodes(input_path)
 
-    print(f"🎯 Quantizing nodes:")  #  {len(nodes)}
+    print(f"Quantizing nodes")
 
     quantize_dynamic(
         model_input=input_path,
@@ -118,12 +103,8 @@ def quantize_onnx(input_path, output_path):
         nodes_to_quantize=nodes
     )
 
-    print(f"✅ Quantized saved:")  #   {output_path}
+    print(f"Quantized saved:")
 
-
-# =========================
-# 4. Load model
-# =========================
 
 def load_model(checkpoint_path):
     checkpoint = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
@@ -149,20 +130,14 @@ def load_model(checkpoint_path):
     return model, config
 
 
-# =========================
-# 5. MAIN
-# =========================
-
 if __name__ == "__main__":
     save_dir = "onnx_export"
-    checkpoint = "proto_t5s_v1.pt"
+    checkpoint = "transformer.pt"
 
     model, config = load_model(checkpoint)
 
-    # 1. FP32 export
     export_fp32(model, config, save_dir)
 
-    # 2. Quantize only FF
     quantize_onnx(
         f"{save_dir}/encoder_fp32.onnx",
         f"{save_dir}/encoder_fp8.onnx"
