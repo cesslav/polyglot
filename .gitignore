@@ -1,7 +1,9 @@
-*.arrow
 /sources/s1024_full/
 /sources/s1024_val/
+/onnx_export
+/.idea
 .gitignore
 *.onnx
 *.pt
-/.idea
+*.arrow
+*.tar.gz
