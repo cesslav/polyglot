@@ -46,19 +46,19 @@ def length_filter(example):
 
 ds_fine = load_dataset("wmt/wmt19", f"{SRC_LANG[0:2]}-{TGT_LANG[0:2]}", split="train", cache_dir="/home/trashdata/HF/cache")  # , cache_dir="/home/trashdata/HF/cache"
 print(ds_fine)
-main_dataset = ds_fine.map(tokenization_fine, num_proc=20, with_indices=True)
+main_dataset = ds_fine.map(tokenization_fine, with_indices=True)
 main_dataset.set_format(type="torch", columns=["input", "output"])
 main_dataset = main_dataset.filter(length_filter, num_proc=20)
 
 
 ds_short = load_dataset("ymoslem/Tatoeba-Translations", split="train", cache_dir="/home/trashdata/HF/cache")   # .select(range(100000))  # .take(24000000)
-short_dataset = ds_short.map(tokenization_tatoeba, num_proc=16, with_indices=True)
+short_dataset = ds_short.map(tokenization_tatoeba, with_indices=True)
 short_dataset.set_format(type="torch", columns=["input", "output"])
-short_dataset = short_dataset.filter(length_filter, num_proc=16)
+short_dataset = short_dataset.filter(length_filter)
 
 
 train_dataset = concatenate_datasets([main_dataset, short_dataset])
-train_dataset.save_to_disk("/home/trashdata/sources/s1024_full")
+train_dataset.save_to_disk("./sources/s512_full")
 
 
 ds = [load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="dev", cache_dir="/home/trashdata/HF/cache"),
@@ -68,11 +68,10 @@ ds = [load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="dev", c
       ]
 
 pairs = [0, 1]
-dataset1 = load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="dev", cache_dir="/home/trashdata/HF/cache").map(tokenization_flores, num_proc=16, with_indices=True)
+dataset1 = load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="dev", cache_dir="/home/trashdata/HF/cache").map(tokenization_flores, with_indices=True)
 dataset1.set_format(type="torch", columns=["input", "output"])
 pairs = [2, 3]
-dataset2 = load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="devtest", cache_dir="/home/trashdata/HF/cache").map(tokenization_flores, num_proc=16, with_indices=True)
+dataset2 = load_dataset("openlanguagedata/flores_plus", f"{SRC_LANG}", split="devtest", cache_dir="/home/trashdata/HF/cache").map(tokenization_flores, with_indices=True)
 dataset2.set_format(type="torch", columns=["input", "output"])
 eval_dataset = concatenate_datasets([dataset1, dataset2])
-eval_dataset.save_to_disk("./sources/s1024_val")
-eval_dataset.save_to_disk("/home/trashdata/sources/s1024_short_full")
+eval_dataset.save_to_disk("./sources/s512_val")

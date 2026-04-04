@@ -1,15 +1,11 @@
-import os
-import torch
 import onnxruntime as ort
 import numpy as np
 from flask import Flask, request, jsonify, render_template_string
 from transformers import AutoTokenizer
-from imp import Transformer
 
 app = Flask(__name__)
 np.log_softmax = lambda x, axis: np.log(np_softmax(x))
 
-# ================= MODEL LOAD =================
 
 class ONNXTransformer:
     def __init__(self, encoder_path, decoder_path, device="cpu"):
@@ -18,9 +14,6 @@ class ONNXTransformer:
         self.encoder = ort.InferenceSession(encoder_path, providers=providers)
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
-    # =========================
-    # Encoder
-    # =========================
     def encode(self, src):
         inputs = {
             "src": src.astype(np.int64),
@@ -29,9 +22,6 @@ class ONNXTransformer:
         memory = self.encoder.run(["memory"], inputs)[0]
         return memory
 
-    # =========================
-    # Decoder
-    # =========================
     def decode(self, tgt, memory):
         inputs = {
             "tgt": tgt.astype(np.int64),
@@ -49,7 +39,6 @@ model = ONNXTransformer(
     decoder_path="onnx_export/decoder_int8.onnx"
 )
 
-# ================= BEAM SEARCH =================
 
 def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
     bos, eos = 0, 1
@@ -97,7 +86,6 @@ def np_softmax(x):
     exp = np.exp(x)
     return exp / np.sum(exp, axis=-1, keepdims=True)
 
-# ================= API =================
 
 HTML = """
 <!DOCTYPE html>
@@ -181,7 +169,6 @@ document.getElementById('input').addEventListener('input', (e) => {
 </html>
 """
 
-# ================= ROUTE =================
 
 @app.route("/")
 def index():

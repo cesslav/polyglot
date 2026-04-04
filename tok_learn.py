@@ -4,7 +4,7 @@ from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders, pr
 
 
 ds = load_dataset("wmt/wmt19", f"ru-en", split="train", cache_dir="/home/trashdata/HF/cache", streaming=True)
-batch = 1000
+batch = 100
 print(ds)
 def get_training_corpus(batch=10):
     for i in ds.iter(batch_size=batch):

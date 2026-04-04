@@ -1,76 +1,94 @@
 import os
 import torch
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 from transformers import AutoTokenizer
-from imp import Transformer
+import numpy as np
+import onnxruntime as ort
+
 
 TOKEN = "Telegram Bot Token"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-tokenizer = AutoTokenizer.from_pretrained("./tokenizer")
+np.log_softmax = lambda x, axis: np.log(np_softmax(x))
 
 
-checkpoint_dir = "./"
-checkpoint_name = "transformer.pt"
+class ONNXTransformer:
+    def __init__(self, encoder_path, decoder_path, device="cpu"):
+        providers = ["CPUExecutionProvider"]
 
-checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False, map_location=device)
-config = checkpoint["config"]
-model = Transformer(
-    dim=config["d_model"],
-    enc_num_tokens=config["vocab_size"],
-    enc_depth=config["num_layers"],
-    enc_heads=config["num_heads"],
-    enc_dim_head=config["dim_head"],
-    enc_mlp_mult=config["mlp_mult"],
-    dec_num_tokens=config["vocab_size"],
-    dec_depth=config["num_layers"],
-    dec_heads=config["num_heads"],
-    dec_dim_head=config["dim_head"],
-    dec_mlp_mult=config["mlp_mult"],
-    dropout=config["dropout"],
-    tie_token_emb=True
-).to(device)
-model.load_state_dict(checkpoint["model_state_dict"])
-model.eval()
+        self.encoder = ort.InferenceSession(encoder_path, providers=providers)
+        self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
-bos = 0
-eos = 1
-pad = 3
-beam_size = 4
+    def encode(self, src):
+        inputs = {
+            "src": src.astype(np.int64),
+        }
+
+        memory = self.encoder.run(["memory"], inputs)[0]
+        return memory
+
+    def decode(self, tgt, memory):
+        inputs = {
+            "tgt": tgt.astype(np.int64),
+            "memory": memory.astype(np.float32),
+        }
+
+        logits = self.decoder.run(["logits"], inputs)[0]
+        return logits
 
 
-def beam_search(transformer, tokenizer, src, beam_size=10, max_len=256, device="cpu"):
+tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
+
+model = ONNXTransformer(
+    encoder_path="onnx_export/encoder_int8.onnx",
+    decoder_path="onnx_export/decoder_int8.onnx"
+)
+
+
+def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=256):
     bos, eos = 0, 1
-    with torch.no_grad():
-        enc = transformer.encoder(src)
-        # (sequence, score)
-        beams = [(torch.tensor([[bos]], device=device), 0.0)]
-        for _ in range(max_len):
-            new_beams = []
-            for seq, score in beams:
-                if seq[0, -1].item() == eos:
-                    new_beams.append((seq, score))
-                    continue
-                dec = transformer.decoder(seq, enc)
-                logits = transformer.to_logits(dec)
-                next_token_logits = logits[:, -1, :]
-                log_probs = torch.log_softmax(next_token_logits, dim=-1)
-                topk_log_probs, topk_tokens = torch.topk(log_probs, beam_size, dim=-1)
-                for k in range(beam_size):
-                    next_token = topk_tokens[0, k].unsqueeze(0).unsqueeze(0)
-                    new_seq = torch.cat([seq, next_token], dim=1)
-                    new_score = score + topk_log_probs[0, k].item()
-                    new_beams.append((new_seq, new_score))
-            # сортируем по score
-            beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
-            # если все завершены — стоп
-            if all(seq[0, -1].item() == eos for seq, _ in beams):
-                break
-        best_seq = beams[0][0]
-    return tokenizer.decode(best_seq[0])
+    src_np = src.cpu().numpy()
+    memory = model.encode(src_np)
+    beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
+    for _ in range(max_len):
+        new_beams = []
+
+        for seq, score in beams:
+            if seq[0, -1] == eos:
+                new_beams.append((seq, score))
+                continue
+
+            logits = model.decode(seq, memory)
+
+            next_token_logits = logits[:, -1, :]
+            log_probs = np.log_softmax(next_token_logits, axis=-1)
+
+            topk_idx = np.argsort(-log_probs, axis=-1)[0][:beam_size]
+            topk_log_probs = log_probs[0][topk_idx]
+
+            for k in range(beam_size):
+                next_token = topk_idx[k]
+                new_seq = np.concatenate([seq, [[next_token]]], axis=1)
+                new_score = score + float(topk_log_probs[k])
+
+                new_beams.append((new_seq, new_score))
+
+        beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
+
+        if all(seq[0, -1] == eos for seq, _ in beams):
+            break
+
+    best_seq = beams[0][0]
+    return tokenizer.decode(best_seq[0], skip_special_tokens=True)
+
+
+def np_softmax(x):
+    x = x - np.max(x, axis=-1, keepdims=True)
+    exp = np.exp(x)
+    return exp / np.sum(exp, axis=-1, keepdims=True)
 
 
 bot = Bot(TOKEN)
@@ -89,7 +107,7 @@ async def translate(message: Message):
     try:
         src = tokenizer(text, truncation=True, padding='max_length', max_length=512, return_tensors="pt")[
             "input_ids"].to(device)
-        translation = beam_search(model, tokenizer, src, beam_size=beam_size, device=device)
+        translation = beam_search_onnx(model, tokenizer, src, beam_size=4)
 
         await message.answer(translation)
 
