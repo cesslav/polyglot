@@ -4,7 +4,7 @@ import onnxruntime as ort
 import numpy as np
 from flask import Flask, request, jsonify, render_template_string
 from transformers import AutoTokenizer
-from v8_imp import Transformer
+from imp import Transformer
 
 app = Flask(__name__)
 np.log_softmax = lambda x, axis: np.log(np_softmax(x))

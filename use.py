@@ -1,7 +1,7 @@
 import os
 from transformers import AutoTokenizer
 import torch
-from v8_imp import Transformer
+from imp import Transformer
 
 
 def beam_search(transformer, tokenizer, src, beam_size=10, max_len=256, device="cpu"):

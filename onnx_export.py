@@ -4,7 +4,7 @@ import torch
 import os
 import onnx
 
-from v8_imp import Transformer
+from imp import Transformer
 
 from onnxruntime.quantization import (
     quantize_dynamic,

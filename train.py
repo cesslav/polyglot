@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
-from v8_imp import Transformer
+from imp import Transformer
 import os
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LambdaLR

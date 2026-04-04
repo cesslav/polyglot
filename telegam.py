@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 from transformers import AutoTokenizer
-from v8_imp import Transformer
+from imp import Transformer
 
 TOKEN = "Telegram Bot Token"
 
