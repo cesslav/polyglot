@@ -14,6 +14,7 @@ from imp import Transformer
 import os
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LambdaLR
+from collections import deque
 
 os.environ['HIP_VISIBLE_DEVICES'] = "0"
 os.environ['HSA_OVERRIDE_GFX_VERSION'] = "11.0.0"
@@ -112,37 +113,44 @@ def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss=0, pro
     torch.save(checkpoint, os.path.join(checkpoint_dir, f"transformer_epoch_{epoch}.pt"))
 
 
-def train_epoch(model, loader, optimizer, scheduler, criterion, device, num):
+def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=16):
     model.train()
     total_loss = 0
-    last_thousand_loss = []
+    accum_loss = 0
+    last_thousand_loss = deque(maxlen=1000)
     counter = 0
-    loop = tqdm(loader)
+    step = 0
+    loop = tqdm(loader, desc=f"Epoch {num}")
     for batch in loop:
-        optimizer.zero_grad()
+
         src, tgt = batch["input"].to(device).squeeze(), batch["output"].to(device).squeeze()
 
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            output = model(src, tgt[:, :-1]) / 0.7# , src_mask)
-            loss = criterion(output.contiguous().view(-1, vocab_size), tgt[:, 1:].contiguous().view(-1))
+            output = model(src, tgt[:, :-1])
+            loss = criterion(output.contiguous().view(-1, vocab_size), tgt[:, 1:].contiguous().view(-1)) / accumulation_steps
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
-        optimizer.step()
-        scheduler.step()
+        step += 1
+        accum_loss += loss.item()
+        if step % accumulation_steps == 0 or step == len(loader):
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
 
-        total_loss += loss.item()
-        counter += 1
-
-        if len(last_thousand_loss) < 1000:
-            last_thousand_loss.append(loss.item())
-        else:
-            last_thousand_loss.pop(0)
-            last_thousand_loss.append(loss.item())
-        loop.set_postfix_str(f"loss: {loss.item():.6f}, avg_loss: {(total_loss / counter):.6f}  "
-                             f"{(sum(last_thousand_loss) / len(last_thousand_loss)):.6f}  "
-                             f"{max(last_thousand_loss):.6f}, since_last_save: {datetime.now() - last_save}")
-        if datetime.now() - last_save > timedelta(hours=2):
+            total_loss += accum_loss
+            counter += 1
+            last_thousand_loss.append(accum_loss)
+            if counter:
+                loop.set_postfix_str(
+                    f"loss: {accum_loss:.6f}  "
+                    f"avg: {total_loss / counter:.6f}  "
+                    f"avg1k: {sum(last_thousand_loss) / len(last_thousand_loss):.6f}  "
+                    f"max1k: {max(last_thousand_loss):.6f}  "
+                    f"save: {datetime.now() - last_save}"
+                )
+            accum_loss = 0
+        if datetime.now() - last_save > timedelta(hours=1):
             save(model, num, optimizer, scheduler, total_loss / counter, progress=(loop.format_dict["n"] / loop.format_dict["total"]))
     return total_loss / len(loader)
 
@@ -174,12 +182,16 @@ config = {
 
 with open("train_config.txt", "r") as config_file:
     is_continue = int(config_file.readline())
-    checkpoint_dir = config_file.readline()
+    checkpoint_dir = config_file.readline().replace("\n", "")
     os.makedirs(checkpoint_dir, exist_ok=True)
-    checkpoint_name = config_file.readline()
-    if not (checkpoint_name and os.path.isfile(checkpoint_dir + checkpoint_name)):
+    checkpoint_name = config_file.readline().replace("\n", "")
+    if not (checkpoint_name and os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name))):
         is_continue = 0
         checkpoint_name = ""
+        if not os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name)):
+            print(os.path.join(checkpoint_dir, checkpoint_name))
+            print("Файл контрольной точки не найден!")
+
     try:
         batch_size = int(config_file.readline())
     except Exception as e:
@@ -207,7 +219,7 @@ with open("train_config.txt", "r") as config_file:
                 pass
 
         if config["num_heads"] == 0:
-            config["num_heads"] = config["d_model"] // config["dim_heads"]
+            config["num_heads"] = config["d_model"] // config["dim_head"]
         transformer = Transformer(
             dim=config["d_model"],
             enc_num_tokens=config["vocab_size"],
@@ -229,11 +241,12 @@ with open("train_config.txt", "r") as config_file:
         scheduler = get_transformer_scheduler(optimizer, warmup_steps=30000)
         transformer.apply(init_weights)
         start_epoch = 0
+        progress = 0
 
     else:
         checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False)
         config = checkpoint["config"]
-
+        config["dec_depth_diff"] = 2
         transformer = Transformer(
             dim=config["d_model"],
             enc_num_tokens=config["vocab_size"],
@@ -260,11 +273,13 @@ with open("train_config.txt", "r") as config_file:
         train_loss = checkpoint["train_loss"]
         start_epoch = checkpoint["epoch"] - 1
         vocab_size = config["vocab_size"]
+        for i in range(10):
+            _ = config_file.readline()
     try:
-        train_loader = DataLoader(load_from_disk(config_file.readline()), batch_size=batch_size, shuffle=True,
-                                  num_workers=16, pin_memory=True)
-        val_loader = DataLoader(load_from_disk(config_file.readline()), batch_size=batch_size, num_workers=12,
-                                pin_memory=True)
+        train_loader = DataLoader(load_from_disk(os.path.join(config_file.readline()).replace("\n", "")),
+                                  batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(load_from_disk(os.path.join(config_file.readline()).replace("\n", "")),
+                                batch_size=batch_size, num_workers=12, pin_memory=True, persistent_workers=True)
     except Exception as e:
         print(e)
         sys.exit(1)
