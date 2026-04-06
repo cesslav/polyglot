@@ -113,7 +113,7 @@ def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss=0, pro
     torch.save(checkpoint, os.path.join(checkpoint_dir, f"transformer_epoch_{epoch}.pt"))
 
 
-def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=16):
+def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=4):
     model.train()
     total_loss = 0
     accum_loss = 0
@@ -127,13 +127,13 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
 
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
             output = model(src, tgt[:, :-1])
-            loss = criterion(output.contiguous().view(-1, vocab_size), tgt[:, 1:].contiguous().view(-1)) / accumulation_steps
+            loss = criterion(output.contiguous().view(-1, vocab_size), tgt[:, 1:].contiguous().view(-1)) ** 2 / accumulation_steps
 
         loss.backward()
         step += 1
         accum_loss += loss.item()
         if step % accumulation_steps == 0 or step == len(loader):
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
@@ -147,7 +147,8 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
                     f"avg: {total_loss / counter:.6f}  "
                     f"avg1k: {sum(last_thousand_loss) / len(last_thousand_loss):.6f}  "
                     f"max1k: {max(last_thousand_loss):.6f}  "
-                    f"save: {datetime.now() - last_save}"
+                    f"save: {datetime.now() - last_save},"
+                    f"{total_norm}"
                 )
             accum_loss = 0
         if datetime.now() - last_save > timedelta(hours=1):
@@ -185,10 +186,10 @@ with open("train_config.txt", "r") as config_file:
     checkpoint_dir = config_file.readline().replace("\n", "")
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_name = config_file.readline().replace("\n", "")
-    if not (checkpoint_name and os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name))):
+    if not (checkpoint_name and os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name))) and is_continue:
         is_continue = 0
         checkpoint_name = ""
-        if not os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name)):
+        if not os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name)) and checkpoint_name:
             print(os.path.join(checkpoint_dir, checkpoint_name))
             print("Файл контрольной точки не найден!")
 
