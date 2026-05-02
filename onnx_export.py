@@ -133,7 +133,7 @@ def load_model(checkpoint_path):
 
 if __name__ == "__main__":
     save_dir = "onnx_export"
-    checkpoint = "./t5m/transformer_epoch_1.pt"
+    checkpoint = "./t5m/d1024l6m4_loss9.pt"
 
     model, config = load_model(checkpoint)
 

@@ -41,8 +41,8 @@ from transformers import PreTrainedTokenizerFast
 
 wrapped_tokenizer = PreTrainedTokenizerFast(
     tokenizer_object=tokenizer,
-    bos_token="<|s|>",
-    eos_token="<|/s|>",
+    bos_token="<|bos|>",
+    eos_token="<|eos|>",
     unk_token="<|unk|>",
     pad_token="<|pad|>",
     cls_token="<|cls|>",

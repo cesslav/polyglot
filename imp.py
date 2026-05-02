@@ -383,8 +383,9 @@ class Transformer(nn.Module):
         self.to_logits = nn.Linear(dim, dec_num_tokens)
 
         if tie_token_emb:
-            # self.encoder.token_emb.weight = self.decoder.token_emb.weight
+            self.encoder.token_emb.weight = self.decoder.token_emb.weight
             self.to_logits.weight = self.decoder.token_emb.weight
+            # self.to_logits.weight = self.decoder.token_emb.weight
 
     def forward(self, src, tgt, mask=None, context_mask=None):
         # x = self.embedding(src)

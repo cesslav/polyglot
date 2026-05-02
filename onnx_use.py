@@ -1,7 +1,3 @@
-# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
-print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
-
-
 import onnxruntime as ort
 import numpy as np
 import torch
@@ -10,14 +6,11 @@ from transformers import AutoTokenizer
 
 class ONNXTransformer:
     def __init__(self, encoder_path, decoder_path, device="cpu"):
-        providers = ["MIGraphXExecutionProvider"]
+        providers = ["CPUExecutionProvider"]
 
         self.encoder = ort.InferenceSession(encoder_path, providers=providers)
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
-    # =========================
-    # Encoder
-    # =========================
     def encode(self, src):
         inputs = {
             "src": src.astype(np.int64),
@@ -25,10 +18,6 @@ class ONNXTransformer:
 
         memory = self.encoder.run(["memory"], inputs)[0]
         return memory
-
-    # =========================
-    # Decoder
-    # =========================
     def decode(self, tgt, memory):
         inputs = {
             "tgt": tgt.astype(np.int64),
