@@ -1,8 +1,4 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
-print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
-
-
-import os
 import torch
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
@@ -13,10 +9,8 @@ import onnxruntime as ort
 
 
 TOKEN = input("Введите токен API телеграма для своего бота: ")
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-np.log_softmax = lambda x, axis: np.log(np_softmax(x))
+bot = Bot(TOKEN)
+dp = Dispatcher()
 
 
 class ONNXTransformer:
@@ -44,15 +38,8 @@ class ONNXTransformer:
         return logits
 
 
-tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
-
-model = ONNXTransformer(
-    encoder_path="onnx_export/encoder_int8.onnx",
-    decoder_path="onnx_export/decoder_int8.onnx"
-)
-
-
 def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=256):
+    np.log_softmax = lambda x, axis: np.log(np_softmax(x))
     bos, eos = 0, 1
     src_np = src.cpu().numpy()
     memory = model.encode(src_np)
@@ -95,10 +82,6 @@ def np_softmax(x):
     return exp / np.sum(exp, axis=-1, keepdims=True)
 
 
-bot = Bot(TOKEN)
-dp = Dispatcher()
-
-
 @dp.message(CommandStart())
 async def start(message: Message):
     await message.answer("Отправь текст, и я переведу его.")
@@ -121,6 +104,14 @@ async def translate(message: Message):
 
 
 if __name__ == "__main__":
+    print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
+
+    tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
+    model = ONNXTransformer(
+        encoder_path="onnx_export/encoder_int8.onnx",
+        decoder_path="onnx_export/decoder_int8.onnx"
+    )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     import asyncio
     print("Started.")
     asyncio.run(dp.start_polling(bot))

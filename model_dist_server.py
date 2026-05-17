@@ -1,14 +1,10 @@
+# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import os
 import zipfile
 from pathlib import Path
-
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-
-MODELS_DIR = Path(os.getenv("MODELS_DIR", "./onnx_export/models"))
-
-REQUIRED_FILES = {"encoder.onnx", "decoder.onnx", "tokenizer/tokenizer.json"}
 
 
 app = FastAPI(
@@ -19,8 +15,8 @@ app = FastAPI(
 
 
 class ModelInfo(BaseModel):
-    name:    str
-    file:    str
+    name: str
+    file: str
     size_mb: int
 
 
@@ -38,13 +34,14 @@ def make_display_name(stem: str) -> str:
 
     if len(parts) >= 2 and all(p.isalpha() and len(p) <= 3 for p in parts[:2]):
         src, tgt = parts[0].upper(), parts[1].upper()
-        suffix   = " " + " ".join(p.capitalize() for p in parts[2:]) if parts[2:] else ""
+        suffix = " " + " ".join(p.capitalize() for p in parts[2:]) if parts[2:] else ""
         return f"{src} -> {tgt}{suffix}"
 
     return " ".join(p.capitalize() for p in parts)
 
 
-def scan_models() -> list[ModelInfo]:
+@app.get("/models", response_model=list[ModelInfo], summary="Список доступных моделей")
+def list_models():
     if not MODELS_DIR.is_dir():
         return []
 
@@ -57,16 +54,12 @@ def scan_models() -> list[ModelInfo]:
 
         size_mb = max(1, round(entry.stat().st_size / 1_048_576))
         result.append(ModelInfo(
-            name    = make_display_name(entry.stem),
-            file    = entry.name,
-            size_mb = size_mb,
+            name=make_display_name(entry.stem),
+            file=entry.name,
+            size_mb=size_mb,
         ))
 
     return result
-
-@app.get("/models", response_model=list[ModelInfo], summary="Список доступных моделей")
-def list_models():
-    return scan_models()
 
 
 @app.get("/models/{filename}", summary="Скачать архив модели")
@@ -80,24 +73,31 @@ def download_model(filename: str):
         raise HTTPException(status_code=404, detail=f"Файл не найден: {filename}")
 
     return FileResponse(
-        path             = path,
-        media_type       = "application/zip",
-        filename         = filename,
+        path = path,
+        media_type = "application/zip",
+        filename = filename,
     )
+
 
 @app.get("/ping", summary="Проверить доступность сервера")
 def ping():
     return {"answer": "available"}
 
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return Response(status_code=204)
 
+
 if __name__ == "__main__":
+    print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
     import uvicorn
+
+    MODELS_DIR = Path(os.getenv("MODELS_DIR", "./onnx_export/models"))
+    REQUIRED_FILES = {"encoder.onnx", "decoder.onnx", "tokenizer/tokenizer.json"}
 
     if not MODELS_DIR.exists():
         print(f"[!] Папка моделей не найдена: {MODELS_DIR.resolve()}")
-        print(f"    Создайте её и положите туда zip-архивы, затем перезапустите сервер.")
+        print(f" Создайте её и положите туда zip-архивы, затем перезапустите сервер.")
 
     uvicorn.run("model_dist_server:app", host="0.0.0.0", port=9100, reload=True)

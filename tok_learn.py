@@ -1,9 +1,8 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
-
-
 from datasets import load_dataset
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders, processors
+from transformers import PreTrainedTokenizerFast
 
 
 ds = load_dataset("wmt/wmt19", f"ru-en", split="train", cache_dir="/home/trashdata/HF/cache", streaming=True)
@@ -36,8 +35,6 @@ encoding = tokenizer.encode("Раз, два, три. Проверка связи
 print(encoding.tokens)
 print(encoding.ids)
 print(tokenizer.decode(encoding.ids))
-
-from transformers import PreTrainedTokenizerFast
 
 wrapped_tokenizer = PreTrainedTokenizerFast(
     tokenizer_object=tokenizer,

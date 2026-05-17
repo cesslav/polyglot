@@ -1,3 +1,4 @@
+# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import sys
 import os
 import zipfile
@@ -6,14 +7,6 @@ import onnxruntime as ort
 from PyQt5 import QtWidgets, QtCore
 from transformers import AutoTokenizer
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR)
-EXTRACT_DIR = os.path.join(BASE_DIR, "_extracted")
-
-os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(EXTRACT_DIR, exist_ok=True)
-
-np.log_softmax = lambda x, axis: np.log(np_softmax(x))
 
 def np_softmax(x):
     x = x - np.max(x, axis=-1, keepdims=True)
@@ -36,9 +29,6 @@ class ONNXTransformer:
         )[0]
 
 
-_model_cache = {}
-
-
 def extract_model(zip_path):
     name = os.path.splitext(os.path.basename(zip_path))[0]
     out_dir = os.path.join(EXTRACT_DIR, name)
@@ -46,14 +36,6 @@ def extract_model(zip_path):
         with zipfile.ZipFile(zip_path, 'r') as z:
             z.extractall(out_dir)
     return out_dir
-
-
-def list_models():
-    return [f for f in os.listdir(MODELS_DIR) if f.endswith(".zip")]
-
-
-def display_name(name):
-    return os.path.splitext(name)[0]
 
 
 def load_model(name):
@@ -66,6 +48,7 @@ def load_model(name):
 
 
 def beam_search(model, tokenizer, src, beam_size=4, max_len=128):
+    np.log_softmax = lambda x, axis: np.log(np_softmax(x))
     bos, eos = 0, 1
     memory = model.encode(src)
     beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
@@ -108,7 +91,6 @@ class TranslatorApp(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
 
-        # Header
         header = QtWidgets.QHBoxLayout()
         self.model_select = QtWidgets.QComboBox()
         header.addStretch()
@@ -116,7 +98,6 @@ class TranslatorApp(QtWidgets.QWidget):
         header.addWidget(self.model_select)
         layout.addLayout(header)
 
-        # Panels
         panels = QtWidgets.QHBoxLayout()
 
         self.input_text = QtWidgets.QTextEdit()
@@ -130,13 +111,11 @@ class TranslatorApp(QtWidgets.QWidget):
 
         layout.addLayout(panels)
 
-        # debounce timer
         self.timer = QtCore.QTimer()
         self.timer.setInterval(300)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.handle_translate)
 
-        # connections
         self.input_text.textChanged.connect(self.on_text_changed)
         self.model_select.currentIndexChanged.connect(self.handle_translate)
 
@@ -144,14 +123,14 @@ class TranslatorApp(QtWidgets.QWidget):
 
     def load_models(self):
         self.model_select.clear()
-        self.models = list_models()
+        self.models = [f for f in os.listdir(MODELS_DIR) if f.endswith(".zip")]
 
         if not self.models:
             self.model_select.addItem("Нет моделей")
             return
 
         for m in self.models:
-            self.model_select.addItem(display_name(m))
+            self.model_select.addItem(os.path.splitext(m)[0])
 
     def on_text_changed(self):
         self.timer.start()
@@ -182,6 +161,17 @@ class TranslatorApp(QtWidgets.QWidget):
 
 
 if __name__ == '__main__':
+    print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    MODELS_DIR = os.path.join(BASE_DIR)
+    EXTRACT_DIR = os.path.join(BASE_DIR, "_extracted")
+
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    os.makedirs(EXTRACT_DIR, exist_ok=True)
+
+
+    _model_cache = {}
     app = QtWidgets.QApplication(sys.argv)
     win = TranslatorApp()
     win.show()

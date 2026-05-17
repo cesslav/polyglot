@@ -1,105 +1,95 @@
-# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
-print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
-
-
-import torch
-from torch import nn
-import torch.nn.functional as F
 import math
-from einops import rearrange
+import logging
+from typing import Optional
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-
-def default(val, d):
-    return val if val is not None else d
+logger = logging.getLogger(__name__)
 
 
 class Residual(nn.Module):
-    def __init__(self, fn):
+    def __init__(self, fn: nn.Module):
         super().__init__()
         self.fn = fn
 
-    def forward(self, x, **kwargs):
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         return self.fn(x, **kwargs) + x
 
 
 class LayerNorm(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim: int):
         super().__init__()
         self.gamma = nn.Parameter(torch.ones(dim))
-        # self.register_buffer("beta", torch.zeros(dim))
         self.beta = nn.Parameter(torch.zeros(dim))
         self.dim = dim
 
-    def forward(self, x):
-        # return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.layer_norm(x, (self.dim,), self.gamma, self.beta)
 
 
 class PreNorm(nn.Module):
-    def __init__(self, dim, fn):
+    def __init__(self, dim: int, fn: nn.Module):
         super().__init__()
         self.norm = LayerNorm(dim)
         self.fn = fn
 
-    def forward(self, x, **kwargs):
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         return self.fn(self.norm(x), **kwargs)
 
 
 class FeedForward(nn.Module):
-
-    def __init__(self, dim, mult=4, dropout=0.):
+    def __init__(self, dim: int, mult: int = 4, dropout: float = 0.):
         super().__init__()
-
         inner_dim = int(dim * mult)
-
         self.w1 = nn.Linear(dim, inner_dim)
         self.w2 = nn.Linear(dim, inner_dim)
-
+        self.out = nn.Linear(inner_dim, dim)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-        self.out = nn.Linear(inner_dim, dim)
-
-    def forward(self, x):
-
-        x1 = self.w1(x)
-        x2 = self.w2(x)
-
-        x = F.silu(x1) * x2
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = F.silu(self.w1(x)) * self.w2(x)
         x = self.dropout1(x)
-
-        x = self.out(x)
-
-        x = self.dropout2(x)
-
+        x = self.dropout2(self.out(x))
         return x
 
 
 class RelativePositionBias(nn.Module):
-
-    def __init__(self, scale, causal, num_buckets=32, max_distance=128, heads=12):
+    def __init__(
+            self,
+            scale: float,
+            causal: bool,
+            num_buckets: int = 32,
+            max_distance: int = 128,
+            heads: int = 12,
+            max_seq_len: int = 1024,
+    ):
         super().__init__()
-
         self.scale = scale
-        self.causal = causal
         self.num_buckets = num_buckets
         self.max_distance = max_distance
-
         self.relative_attention_bias = nn.Embedding(num_buckets, heads)
 
-        self._cache = {}
+        rows = torch.arange(max_seq_len)
+        cols = torch.arange(max_seq_len)
+        rel = cols[None, :] - rows[:, None]
+        buckets = self._relative_position_bucket(
+            rel, causal=causal,
+            num_buckets=num_buckets,
+            max_distance=max_distance,
+        )
+        self.register_buffer("_buckets", buckets, persistent=False)
+
 
     @staticmethod
     def _relative_position_bucket(
-            relative_position,
-            causal=True,
-            num_buckets=32,
-            max_distance=128
-    ):
-
+            relative_position: torch.Tensor,
+            causal: bool = True,
+            num_buckets: int = 32,
+            max_distance: int = 128,
+    ) -> torch.Tensor:
         n = -relative_position
-
         if causal:
             n = torch.clamp(n, min=0)
         else:
@@ -108,158 +98,159 @@ class RelativePositionBias(nn.Module):
             n = torch.abs(n)
 
         max_exact = num_buckets // 2
-
         is_small = n < max_exact
-
         n_clip = torch.clamp(n, min=1)
-
-        val_if_large = max_exact + (
-                torch.log(n_clip.float() / max_exact) /
-                math.log(max_distance / max_exact) *
-                (num_buckets - max_exact)
+        val_large = max_exact + (
+                torch.log(n_clip.float() / max_exact)
+                / math.log(max_distance / max_exact)
+                * (num_buckets - max_exact)
         ).long()
-
-        val_if_large = torch.clamp(val_if_large, max=num_buckets - 1)
-
-        bucket = torch.where(is_small, n, val_if_large)
-
+        val_large = torch.clamp(val_large, max=num_buckets - 1)
+        bucket = torch.where(is_small, n, val_large)
         if not causal:
             bucket = bucket + sign * num_buckets
-
         return bucket
 
-    def forward(self, qk_dots):
-
-        i, j = qk_dots.shape[-2:]
-
-        device = qk_dots.device
-
-        q_pos = torch.arange(j - i, j, device=device)
-        k_pos = torch.arange(j, device=device)
-
-        rel_pos = k_pos[None, :] - q_pos[:, None]
-
-        buckets = self._relative_position_bucket(
-            rel_pos,
-            causal=self.causal,
-            num_buckets=self.num_buckets,
-            max_distance=self.max_distance
-        )
-
+    def get_bias(self, q_len: int, k_len: int) -> torch.Tensor:
+        buckets = self._buckets[k_len - q_len: k_len, :k_len]
         values = self.relative_attention_bias(buckets)
+        return values.permute(2, 0, 1) * self.scale
 
-        bias = rearrange(values, "i j h -> h i j")
-
-        return qk_dots + bias * self.scale
+    def forward(self, qk_dots: torch.Tensor) -> torch.Tensor:
+        i, j = qk_dots.shape[-2:]
+        bias = self.get_bias(i, j)
+        return qk_dots + bias
 
 
 class SelfAttention(nn.Module):
-
     def __init__(
-        self,
-        *,
-        dim,
-        heads=12,
-        dim_head=64,
-        causal=False,
-        dropout=0.,
-        max_seq_len=1024
+            self,
+            *,
+            dim: int,
+            heads: int = 12,
+            dim_head: int = 64,
+            causal: bool = False,
+            dropout: float = 0.,
+            max_seq_len: int = 1024,
     ):
         super().__init__()
-
         inner = heads * dim_head
-
         self.heads = heads
         self.scale = dim_head ** -0.5
         self.causal = causal
+        self._dropout_p = dropout
 
         self.to_qkv = nn.Linear(dim, inner * 3, bias=False)
         self.to_out = nn.Linear(inner, dim)
-
         self.dropout = nn.Dropout(dropout)
 
         self.rel_pos = RelativePositionBias(
             scale=self.scale,
             causal=causal,
-            heads=heads
+            heads=heads,
+            max_seq_len=max_seq_len,
         )
 
-        # кеш маски
         if causal:
-            mask = torch.triu(torch.ones(max_seq_len, max_seq_len), 1).bool()
+            mask = torch.ones(max_seq_len, max_seq_len, dtype=torch.bool).triu(1)
             self.register_buffer("causal_mask", mask, persistent=False)
 
-    def forward(self, x, mask=None):
+    def forward(
+            self,
+            x: torch.Tensor,
+            mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         b, n, _ = x.shape
         h = self.heads
-        qkv = self.to_qkv(x)
-        q, k, v = qkv.chunk(3, dim=-1)
+
+        q, k, v = self.to_qkv(x).chunk(3, dim=-1)
         q = q.view(b, n, h, -1).transpose(1, 2)
         k = k.view(b, n, h, -1).transpose(1, 2)
         v = v.view(b, n, h, -1).transpose(1, 2)
-        q = q * self.scale
-        sim = q @ k.transpose(-1, -2)
-        sim = self.rel_pos(sim)
-        mask_value = -torch.finfo(sim.dtype).max
+
+        attn_bias = self.rel_pos.get_bias(n, n).unsqueeze(0)
+
+        neg_inf = torch.finfo(q.dtype).min
+
         if mask is not None:
-            sim = sim.masked_fill(~mask, mask_value)
+            attn_bias = attn_bias.expand(b, -1, -1, -1).clone()
+            attn_bias = attn_bias.masked_fill(~mask, neg_inf)
+
         if self.causal:
-            sim = sim.masked_fill(
-                self.causal_mask[:n, :n],
-                mask_value
-            )
-        attn = sim.softmax(dim=-1)
-        attn = self.dropout(attn)
-        out = attn @ v
+            causal_m = self.causal_mask[:n, :n]
+            attn_bias = attn_bias.masked_fill(causal_m, neg_inf)
+
+        drop_p = self._dropout_p if self.training else 0.0
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_bias,
+            dropout_p=drop_p,
+            scale=self.scale,
+        )
         out = out.transpose(1, 2).contiguous().view(b, n, -1)
         return self.to_out(out)
+
 
 
 class CrossAttention(nn.Module):
     def __init__(
             self,
             *,
-            dim,
-            context_dim=None,
-            heads=12,
-            dim_head=64,
-            dropout=0.
+            dim: int,
+            context_dim: Optional[int] = None,
+            heads: int = 12,
+            dim_head: int = 64,
+            dropout: float = 0.,
     ):
         super().__init__()
         inner_dim = dim_head * heads
-        context_dim = default(context_dim, dim)
-
+        context_dim = context_dim if context_dim is not None else dim
         self.heads = heads
         self.scale = dim_head ** -0.5
+        self._dropout_p = dropout
 
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
         self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
         self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
         self.to_out = nn.Linear(inner_dim, dim)
-
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, context, mask=None, context_mask=None):
-        b, n, _, h = *x.shape, self.heads
-        kv_input = default(context, x)
-        q, k, v = self.to_q(x), self.to_k(kv_input), self.to_v(kv_input)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
-        q = q * self.scale
-        sim = torch.einsum('b h i d, b h j d -> b h i j', q, k)
-        # sim = q @ k.transpose(-1, -2)
-        mask_value = -torch.finfo(sim.dtype).max
+    def forward(
+            self,
+            x: torch.Tensor,
+            context: torch.Tensor,
+            mask: Optional[torch.Tensor] = None,
+            context_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        b, n, _ = x.shape
+        h = self.heads
+        kv_input = context if context is not None else x
+        m = kv_input.shape[1]
 
-        if mask is not None:
-            sim = sim.masked_fill(~mask, mask_value)
+        q = self.to_q(x).view(b, n, h, -1).transpose(1, 2)
+        k = self.to_k(kv_input).view(b, m, h, -1).transpose(1, 2)
+        v = self.to_v(kv_input).view(b, m, h, -1).transpose(1, 2)
 
-        if context_mask is not None:
-            sim = sim.masked_fill(~context_mask[:, None, :], mask_value)
+        attn_bias: Optional[torch.Tensor] = None
+        neg_inf = torch.finfo(q.dtype).min
 
-        attn = sim.softmax(dim=-1)
-        attn = self.dropout(attn)
-        out = torch.einsum('b h i j, b h j d -> b h i d', attn, v)
-        # out = attn @ v.transpose(-1, -2)
-        out = rearrange(out, 'b h n d -> b n (h d)')
+        if mask is not None or context_mask is not None:
+            attn_bias = torch.zeros(b, h, n, m, device=x.device, dtype=q.dtype)
+            if mask is not None:
+                attn_bias = attn_bias.masked_fill(~mask, neg_inf)
+            if context_mask is not None:
+                cm = context_mask[:, None, None, :]
+                attn_bias = attn_bias.masked_fill(~cm, neg_inf)
+
+        drop_p = self._dropout_p if self.training else 0.0
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_bias,
+            dropout_p=drop_p,
+            scale=self.scale,
+        )
+
+        out = out.transpose(1, 2).contiguous().view(b, n, -1)
         return self.to_out(out)
 
 
@@ -267,129 +258,137 @@ class Encoder(nn.Module):
     def __init__(
             self,
             *,
-            dim,
-            num_tokens,
-            depth,
-            heads=12,
-            dim_head=64,
-            causal=False,
-            mlp_mult=4,
-            dropout=0.
+            dim: int,
+            num_tokens: int,
+            depth: int,
+            heads: int = 12,
+            dim_head: int = 64,
+            causal: bool = False,
+            mlp_mult: int = 4,
+            dropout: float = 0.,
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
-
-        self.layer = nn.ModuleList([])
-        for _ in range(depth):
-            self.layer.append(nn.ModuleList([
-                Residual(PreNorm(dim, SelfAttention(dim=dim, heads=heads, dim_head=dim_head, causal=causal,
-                                                      dropout=dropout))),
-                Residual(PreNorm(dim, FeedForward(dim=dim, mult=mlp_mult, dropout=dropout))),
-            ]))
-
+        self.layer = nn.ModuleList([
+            nn.ModuleList([
+                Residual(PreNorm(dim, SelfAttention(
+                    dim=dim, heads=heads, dim_head=dim_head,
+                    causal=causal, dropout=dropout,
+                ))),
+                Residual(PreNorm(dim, FeedForward(
+                    dim=dim, mult=mlp_mult, dropout=dropout,
+                ))),
+            ])
+            for _ in range(depth)
+        ])
         self.final_norm = LayerNorm(dim)
 
-    def forward(self, x, mask=None):
+    def forward(
+            self,
+            x: torch.Tensor,
+            mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         x = self.token_emb(x)
         for attn, mlp in self.layer:
             x = attn(x, mask=mask)
             x = mlp(x)
-
-        x = self.final_norm(x)
-        return x
+        return self.final_norm(x)
 
 
 class Decoder(nn.Module):
     def __init__(
             self,
             *,
-            dim,
-            num_tokens,
-            depth,
-            heads=12,
-            dim_head=64,
-            causal=True,
-            mlp_mult=4,
-            dropout=0.
+            dim: int,
+            num_tokens: int,
+            depth: int,
+            heads: int = 12,
+            dim_head: int = 64,
+            causal: bool = True,
+            mlp_mult: int = 4,
+            dropout: float = 0.,
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
-
-        self.layer = nn.ModuleList([])
-        for _ in range(depth):
-            self.layer.append(nn.ModuleList([
-                Residual(PreNorm(dim, SelfAttention(dim=dim, heads=heads, dim_head=dim_head, causal=causal,
-                                                      dropout=dropout))),
-                Residual(PreNorm(dim, CrossAttention(dim=dim, heads=heads, dim_head=dim_head, dropout=dropout))),
-                Residual(PreNorm(dim, FeedForward(dim=dim, mult=mlp_mult, dropout=dropout))),
-            ]))
-
+        self.layer = nn.ModuleList([
+            nn.ModuleList([
+                Residual(PreNorm(dim, SelfAttention(
+                    dim=dim, heads=heads, dim_head=dim_head,
+                    causal=causal, dropout=dropout,
+                ))),
+                Residual(PreNorm(dim, CrossAttention(
+                    dim=dim, heads=heads, dim_head=dim_head, dropout=dropout,
+                ))),
+                Residual(PreNorm(dim, FeedForward(
+                    dim=dim, mult=mlp_mult, dropout=dropout,
+                ))),
+            ])
+            for _ in range(depth)
+        ])
         self.final_norm = LayerNorm(dim)
 
-    def forward(self, x, context, mask=None, context_mask=None):
+    def forward(
+            self,
+            x: torch.Tensor,
+            context: torch.Tensor,
+            mask: Optional[torch.Tensor] = None,
+            context_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         x = self.token_emb(x)
-
         for attn, cross_attn, mlp in self.layer:
             x = attn(x, mask=mask)
             x = cross_attn(x, context=context, mask=mask, context_mask=context_mask)
             x = mlp(x)
+        return self.final_norm(x)
 
-        x = self.final_norm(x)
-
-        return x
 
 
 class Transformer(nn.Module):
     def __init__(
             self,
             *,
-            dim,
-            enc_num_tokens,
-            enc_depth,
-            enc_heads,
-            enc_dim_head,
-            enc_mlp_mult,
-            dec_num_tokens,
-            dec_depth,
-            dec_heads,
-            dec_dim_head,
-            dec_mlp_mult,
-            dropout=0.,
-            tie_token_emb=True
+            dim: int,
+            enc_num_tokens: int,
+            enc_depth: int,
+            enc_heads: int,
+            enc_dim_head: int,
+            enc_mlp_mult: int,
+            dec_num_tokens: int,
+            dec_depth: int,
+            dec_heads: int,
+            dec_dim_head: int,
+            dec_mlp_mult: int,
+            dropout: float = 0.,
+            tie_token_emb: bool = True,
     ):
         super().__init__()
-
-        # self.embedding = nn.Embedding(enc_num_tokens, dim)
         self.encoder = Encoder(
-            dim=dim,
-            num_tokens=enc_num_tokens,
-            depth=enc_depth,
-            heads=enc_heads,
-            dim_head=enc_dim_head,
-            mlp_mult=enc_mlp_mult,
-            dropout=dropout
+            dim=dim, num_tokens=enc_num_tokens, depth=enc_depth,
+            heads=enc_heads, dim_head=enc_dim_head, mlp_mult=enc_mlp_mult,
+            dropout=dropout,
         )
-
         self.decoder = Decoder(
-            dim=dim,
-            num_tokens=dec_num_tokens,
-            depth=dec_depth,
-            heads=dec_heads,
-            dim_head=dec_dim_head,
-            mlp_mult=dec_mlp_mult,
-            dropout=dropout
+            dim=dim, num_tokens=dec_num_tokens, depth=dec_depth,
+            heads=dec_heads, dim_head=dec_dim_head, mlp_mult=dec_mlp_mult,
+            dropout=dropout,
         )
-
         self.to_logits = nn.Linear(dim, dec_num_tokens)
 
         if tie_token_emb:
             self.encoder.token_emb.weight = self.decoder.token_emb.weight
             self.to_logits.weight = self.decoder.token_emb.weight
-            # self.to_logits.weight = self.decoder.token_emb.weight
 
-    def forward(self, src, tgt, mask=None, context_mask=None):
-        # x = self.embedding(src)
+    def forward(
+            self,
+            src: torch.Tensor,
+            tgt: torch.Tensor,
+            mask: Optional[torch.Tensor] = None,
+            context_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         x = self.encoder(src, mask=mask)
         x = self.decoder(tgt, x, mask=mask, context_mask=context_mask)
-        x = self.to_logits(x)
-        return x
+        return self.to_logits(x)
+
+
+if __name__ == "__main__":
+    print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")

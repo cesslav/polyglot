@@ -1,17 +1,9 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
-print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
-
-
 import torch
 import os
 import onnx
-
 from imp import Transformer
-
-from onnxruntime.quantization import (
-    quantize_dynamic,
-    QuantType,
-)
+from onnxruntime.quantization import quantize_dynamic, QuantType
 
 
 def export_fp32(model, config, save_dir):
@@ -132,8 +124,10 @@ def load_model(checkpoint_path):
 
 
 if __name__ == "__main__":
+    print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
+
     save_dir = "onnx_export"
-    checkpoint = "./t5m/d1024l6m4_loss9.pt"
+    checkpoint = "./transformer.pt"
 
     model, config = load_model(checkpoint)
 

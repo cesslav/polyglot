@@ -1,7 +1,7 @@
 1
 ./t5s
-transformer_epoch_1.pt
-6
+transformer_epoch_1_102464_6.424.pt
+12,12
 200
 0.00003
 0.8

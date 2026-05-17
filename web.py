@@ -1,123 +1,12 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
-print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
-
 import os
 import onnxruntime as ort
 import numpy as np
 from flask import Flask, request, jsonify, render_template_string, send_from_directory, send_file
 from transformers import AutoTokenizer
 
+
 app = Flask(__name__)
-
-NEWS = [
-    {
-        "title": "О проекте «Полиглот»",
-        "body": f"«Полиглот» — это open-source переводчик нового поколения, построенный как открытая платформа для совместной разработки. Проект изначально задуман не просто как инструмент перевода, а как экосистема, в которой пользователи и разработчики по всему миру могут участвовать в создании и улучшении языковых моделей, функционала и пользовательского опыта.<br/><br/>"
-                f"Подход «Полиглота» близок к философии таких инициатив, как Linux Foundation, где ценность создаётся не одной компанией, а сообществом. Именно такая модель позволила технологиям на базе Linux стать фундаментом значительной части современной цифровой инфраструктуры.<br/>"
-    },
-    {
-        "title": "Уникальность проекта «Полиглот»",
-        "body": f"В отличие от классических переводчиков, таких как Google Translate или DeepL, «Полиглот» предлагает принципиально иной подход.<br/>"
-                f"Открытость вместо «чёрного ящика»<br/>"
-                f"Коммерческие сервисы работают как закрытые системы: пользователь не влияет на алгоритмы и не понимает, как формируется результат.<br/>"
-                f"«Полиглот» — это открытая архитектура:<br/>"
-                f"&#9;• доступ к коду и логике работы <br/>"
-                f"&#9;• возможность доработки и модификации <br/>"
-                f"&#9;• участие в развитии качества перевода <br/>"
-                f"Пользователь становится не просто потребителем, а участником создания продукта."
-    },
-    {
-        "title": "Настраиваемость вместо универсальности",
-        "body": f"Массовые переводчики вынуждены быть «усреднёнными»."
-                "«Полиглот» позволяет:<br/>"
-                "&#9;• создавать специализированные языковые пакеты (технические, медицинские, юридические и др.) <br/>"
-                "&#9;• адаптировать перевод под конкретные задачи <br/>"
-                "&#9;• учитывать контекст, стиль и терминологию <br/>"
-                "Это делает его особенно ценным в профессиональной среде, где точность критична.<br/>"
-    },
-]
-
-# ─── Model management ─────────────────────────────────────────────────────────
-MODELS_DIR = "./onnx_export/for_web"
-
-np.log_softmax = lambda x, axis: np.log(np_softmax(x))
-
-
-def np_softmax(x):
-    x = x - np.max(x, axis=-1, keepdims=True)
-    exp = np.exp(x)
-    return exp / np.sum(exp, axis=-1, keepdims=True)
-
-
-def list_model_dirs():
-    if not os.path.isdir(MODELS_DIR):
-        return []
-    return sorted(
-        d for d in os.listdir(MODELS_DIR)
-        if os.path.isdir(os.path.join(MODELS_DIR, d))
-    )
-
-
-class ONNXTransformer:
-    def __init__(self, model_dir):
-        providers = ["CPUExecutionProvider"]
-        encoder_path = os.path.join(model_dir, "encoder.onnx")
-        decoder_path = os.path.join(model_dir, "decoder.onnx")
-        self.encoder = ort.InferenceSession(encoder_path, providers=providers)
-        self.decoder = ort.InferenceSession(decoder_path, providers=providers)
-
-    def encode(self, src):
-        return self.encoder.run(["memory"], {"src": src.astype(np.int64)})[0]
-
-    def decode(self, tgt, memory):
-        return self.decoder.run(
-            ["logits"],
-            {"tgt": tgt.astype(np.int64), "memory": memory.astype(np.float32)}
-        )[0]
-
-
-_model_cache: dict = {}
-_current_model_name: str | None = None
-
-
-def get_model(name: str):
-    if name not in _model_cache:
-        model_dir = os.path.join(MODELS_DIR, name)
-        tokenizer_dir = os.path.join(model_dir, "tokenizer")
-        tok_path = tokenizer_dir if os.path.isdir(tokenizer_dir) else model_dir
-        tokenizer = AutoTokenizer.from_pretrained(tok_path)
-        model = ONNXTransformer(model_dir)
-        _model_cache[name] = (tokenizer, model)
-    return _model_cache[name]
-
-
-def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
-    bos, eos = 0, 1
-    src_np = src.cpu().numpy() if hasattr(src, "cpu") else np.array(src)
-    memory = model.encode(src_np)
-    beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
-
-    for _ in range(max_len):
-        new_beams = []
-        for seq, score in beams:
-            if seq[0, -1] == eos:
-                new_beams.append((seq, score))
-                continue
-            logits = model.decode(seq, memory)
-            log_probs = np.log_softmax(logits[:, -1, :], axis=-1)
-            topk_idx = np.argsort(-log_probs, axis=-1)[0][:beam_size]
-            topk_log_probs = log_probs[0][topk_idx]
-            for k in range(beam_size):
-                new_seq = np.concatenate([seq, [[topk_idx[k]]]], axis=1)
-                new_beams.append((new_seq, score + float(topk_log_probs[k])))
-        beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
-        if all(seq[0, -1] == eos for seq, _ in beams):
-            break
-
-    return tokenizer.decode(beams[0][0][0], skip_special_tokens=True)
-
-
-# ─── HTML template ────────────────────────────────────────────────────────────
 HTML = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -134,7 +23,6 @@ HTML = """
   />
 
   <style>
-    /* ── Reset ───────────────────────────────────────────────────── */
     *, *::before, *::after {
       box-sizing: border-box;
       margin: 0;
@@ -167,7 +55,6 @@ HTML = """
       min-height: 100vh;
     }
 
-    /* ── Header ──────────────────────────────────────────────────── */
     header {
       position: sticky;
       top: 0;
@@ -201,7 +88,6 @@ HTML = """
       object-fit: contain;
     }
 
-    /* ── Model selector ──────────────────────────────────────────── */
     .model-wrap {
       margin-left: auto;
 
@@ -268,7 +154,6 @@ HTML = """
       font-size: 0.7rem;
     }
 
-    /* ── Main ────────────────────────────────────────────────────── */
     main {
       min-height: 100vh;
 
@@ -279,7 +164,6 @@ HTML = """
       padding: 32px 24px 64px;
     }
 
-    /* ── Translator card ─────────────────────────────────────────── */
     .translator-card {
       width: 100%;
       max-width: 1100px;
@@ -290,13 +174,10 @@ HTML = """
       border: 1px solid rgba(92,184,75,0.22);
       border-radius: 12px;
 
-      /* ВАЖНО */
       overflow: clip;
 
-      /* предотвращает обрезание рамки браузером */
       isolation: isolate;
 
-      /* фикс для печати и subpixel rendering */
       position: relative;
     }
 
@@ -337,7 +218,6 @@ HTML = """
       font-size: 0.68rem;
     }
 
-    /* ── Textarea ────────────────────────────────────────────────── */
     textarea {
       flex: 1;
 
@@ -360,10 +240,8 @@ HTML = """
 
       caret-color: var(--accent);
 
-      /* КЛЮЧЕВОЙ ФИКС */
       overflow: auto;
 
-      /* предотвращает выход выделения */
       clip-path: inset(0 round 0);
 
       display: block;
@@ -383,7 +261,6 @@ HTML = """
       color: #ffffff;
     }
 
-    /* ── Output ──────────────────────────────────────────────────── */
     .output-area {
       flex: 1;
 
@@ -406,7 +283,6 @@ HTML = """
       color: #444;
     }
 
-    /* ── Spinner ─────────────────────────────────────────────────── */
     .spinner-wrap {
       display: none;
 
@@ -465,7 +341,6 @@ HTML = """
       }
     }
 
-    /* ── Footer bar ─────────────────────────────────────────────── */
     .panel-footer {
       display: flex;
       align-items: center;
@@ -504,7 +379,6 @@ HTML = """
       border-color: var(--accent);
     }
 
-    /* ── News ────────────────────────────────────────────────────── */
     .news-section {
       width: 100%;
       max-width: 1100px;
@@ -576,7 +450,90 @@ HTML = """
       line-height: 1.6;
     }
 
-    /* ── Footer ──────────────────────────────────────────────────── */
+    .download-section {
+      width: 100%;
+      max-width: 1100px;
+
+      margin: 0 auto 80px;
+      padding: 28px 22px;
+
+      background: var(--surface);
+
+      border: 1px solid rgba(92,184,75,0.18);
+      border-radius: var(--radius);
+
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 20px;
+    }
+
+    .download-section h2 {
+      color: var(--accent);
+
+      font-family: var(--font-mono);
+      font-size: 1.05rem;
+      font-weight: 600;
+
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .btn-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+
+      padding: 10px 26px;
+
+      background: var(--accent);
+      color: #000;
+
+      border: none;
+      border-radius: 8px;
+
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      font-weight: 500;
+
+      text-decoration: none;
+
+      cursor: pointer;
+
+      transition:
+        opacity 0.15s,
+        transform 0.15s,
+        box-shadow 0.15s;
+    }
+
+    .btn-download:hover {
+      opacity: 0.88;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(92,184,75,0.28);
+    }
+
+    .btn-download svg {
+      flex-shrink: 0;
+    }
+
+    .download-desc {
+      color: var(--muted);
+
+      font-size: 0.8rem;
+      line-height: 1.7;
+    }
+
+    .download-desc strong {
+      color: var(--text);
+    }
+
+    @media (max-width: 768px) {
+      .download-section {
+        margin: 0 0 60px;
+        padding: 24px 20px;
+      }
+    }
+
     footer {
       padding: 20px 24px;
 
@@ -597,7 +554,6 @@ HTML = """
       color: var(--accent);
     }
 
-    /* ── Responsive ──────────────────────────────────────────────── */
     @media (max-width: 768px) {
 
       header {
@@ -673,7 +629,6 @@ HTML = """
       }
     }
 
-    /* ── Print fixes ─────────────────────────────────────────────── */
     @media print {
 
       body {
@@ -704,7 +659,6 @@ HTML = """
       }
     }
 
-    /* ── Accessibility ───────────────────────────────────────────── */
     :focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
@@ -715,7 +669,6 @@ HTML = """
 
 <body>
 
-  <!-- ── Header ─────────────────────────────────────────────────── -->
   <header>
 
     <div class="logo">
@@ -748,7 +701,6 @@ HTML = """
 
   </header>
 
-  <!-- ── Main ───────────────────────────────────────────────────── -->
   <main>
 
     <div class="translator-card">
@@ -768,7 +720,7 @@ HTML = """
               class="char-count"
               id="charCount"
             >
-              0 / 512
+              0 / 2000
             </span>
 
           </div>
@@ -776,7 +728,7 @@ HTML = """
           <textarea
             id="inputText"
             placeholder="Введите текст для перевода…"
-            maxlength="512"
+            maxlength="2000"
             spellcheck="true"
             aria-label="Текст для перевода"
           ></textarea>
@@ -845,7 +797,6 @@ HTML = """
       </div>
     </div>
 
-    <!-- ── News ─────────────────────────────────────────────────── -->
     <section
       class="news-section"
       aria-label="О проекте"
@@ -862,9 +813,38 @@ HTML = """
 
     </section>
 
+    <section
+      class="download-section"
+      aria-label="Скачать приложение"
+    >
+
+      <h2>Скачать приложение</h2>
+
+      <a
+        class="btn-download"
+        href="https://github.com/cesslav/Polyglot_Mobile/releases/latest/download/polyglot.apk"
+        download="polyglot.apk"
+        rel="noopener"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 3v13M7 11l5 5 5-5" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 20h16" stroke="#000" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+        Скачать для Android (.apk)
+      </a>
+
+      <p class="download-desc">
+        <strong>Полиглот Mobile</strong> — это переводчик, который работает
+        <strong>полностью без доступа в интернет</strong>. Языковые модели хранятся
+        прямо на устройстве, поэтому переводы выполняются мгновенно и приватно —
+        ваши тексты никуда не отправляются. Идеально для путешествий, работы
+        в офлайн-режиме и использования в зонах без покрытия сети.
+      </p>
+
+    </section>
+
   </main>
 
-  <!-- ── Footer ────────────────────────────────────────────────── -->
   <footer>
 
     Распространяется по лицензии
@@ -884,17 +864,15 @@ HTML = """
       target="_blank"
       rel="noopener"
     >
-      GitHub
+      GitHub репозиторий проекта
     </a>
 
   </footer>
 
   <script>
 
-    // ── Helpers ───────────────────────────────────────────────────
     const $ = id => document.getElementById(id);
 
-    // ── Models ────────────────────────────────────────────────────
     async function loadModels() {
 
       try {
@@ -947,7 +925,6 @@ HTML = """
       }
     }
 
-    // ── Translation ───────────────────────────────────────────────
     let debounce = null;
 
     function showSpinner() {
@@ -1038,7 +1015,7 @@ HTML = """
           e.target.value;
 
         $('charCount').textContent =
-          `${text.length} / 512`;
+          `${text.length} / 2000`;
 
         clearTimeout(debounce);
 
@@ -1064,7 +1041,6 @@ HTML = """
 
       });
 
-    // ── Copy ──────────────────────────────────────────────────────
     const PLACEHOLDER_OUT =
       'Здесь появится перевод…';
 
@@ -1164,7 +1140,6 @@ HTML = """
 
       });
 
-    // ── News ──────────────────────────────────────────────────────
     async function loadNews() {
 
       try {
@@ -1206,7 +1181,6 @@ HTML = """
       }
     }
 
-    // ── Init ──────────────────────────────────────────────────────
     loadModels();
     loadNews();
 
@@ -1217,7 +1191,76 @@ HTML = """
 """
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+def np_softmax(x):
+    x = x - np.max(x, axis=-1, keepdims=True)
+    exp = np.exp(x)
+    return exp / np.sum(exp, axis=-1, keepdims=True)
+
+
+def list_model_dirs():
+    if not os.path.isdir(MODELS_DIR):
+        return []
+    return sorted(
+        d for d in os.listdir(MODELS_DIR)
+        if os.path.isdir(os.path.join(MODELS_DIR, d))
+    )
+
+
+class ONNXTransformer:
+    def __init__(self, model_dir):
+        providers = ["CPUExecutionProvider"]
+        encoder_path = os.path.join(model_dir, "encoder.onnx")
+        decoder_path = os.path.join(model_dir, "decoder.onnx")
+        self.encoder = ort.InferenceSession(encoder_path, providers=providers)
+        self.decoder = ort.InferenceSession(decoder_path, providers=providers)
+
+    def encode(self, src):
+        return self.encoder.run(["memory"], {"src": src.astype(np.int64)})[0]
+
+    def decode(self, tgt, memory):
+        return self.decoder.run(
+            ["logits"],
+            {"tgt": tgt.astype(np.int64), "memory": memory.astype(np.float32)}
+        )[0]
+
+
+def get_model(name: str):
+    if name not in _model_cache:
+        model_dir = os.path.join(MODELS_DIR, name)
+        tokenizer_dir = os.path.join(model_dir, "tokenizer")
+        tok_path = tokenizer_dir if os.path.isdir(tokenizer_dir) else model_dir
+        tokenizer = AutoTokenizer.from_pretrained(tok_path)
+        model = ONNXTransformer(model_dir)
+        _model_cache[name] = (tokenizer, model)
+    return _model_cache[name]
+
+
+def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
+    np.log_softmax = lambda x, axis: np.log(np_softmax(x))
+    bos, eos = 0, 1
+    src_np = src.cpu().numpy() if hasattr(src, "cpu") else np.array(src)
+    memory = model.encode(src_np)
+    beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
+
+    for _ in range(max_len):
+        new_beams = []
+        for seq, score in beams:
+            if seq[0, -1] == eos:
+                new_beams.append((seq, score))
+                continue
+            logits = model.decode(seq, memory)
+            log_probs = np.log_softmax(logits[:, -1, :], axis=-1)
+            topk_idx = np.argsort(-log_probs, axis=-1)[0][:beam_size]
+            topk_log_probs = log_probs[0][topk_idx]
+            for k in range(beam_size):
+                new_seq = np.concatenate([seq, [[topk_idx[k]]]], axis=1)
+                new_beams.append((new_seq, score + float(topk_log_probs[k])))
+        beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
+        if all(seq[0, -1] == eos for seq, _ in beams):
+            break
+
+    return tokenizer.decode(beams[0][0][0], skip_special_tokens=True)
+
 
 @app.route("/")
 def index():
@@ -1269,22 +1312,51 @@ def api_translate():
 
     result = beam_search_onnx(model, tokenizer, src)
     return jsonify({"translation": result})
-    # except Exception as e:
-    #     print(e)
-    #     return jsonify({"error": f"Ошибка перевода: {e}"}), 500
 
 
 @app.route("/api/news")
 def api_news():
     return jsonify({"news": NEWS})
 
+
 @app.route("/favicon.ico")
 def favicon():
-    return send_from_directory("./", "polylogo.ico", mimetype='image/vnd.microsoft.icon')
+    return send_from_directory("./", "polylogo.ico")
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=9090)
-# укрупнить обводку и шрифты
+    print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
 
-#
+    NEWS = [
+        {
+            "title": "О проекте «Полиглот»",
+            "body": f"«Полиглот» — это open-source переводчик нового поколения, построенный как открытая платформа для совместной разработки. Проект изначально задуман не просто как инструмент перевода, а как экосистема, в которой пользователи и разработчики по всему миру могут участвовать в создании и улучшении языковых моделей, функционала и пользовательского опыта.<br/><br/>"
+                    f"Подход «Полиглота» близок к философии таких инициатив, как Linux Foundation, где ценность создаётся не одной компанией, а сообществом. Именно такая модель позволила технологиям на базе Linux стать фундаментом значительной части современной цифровой инфраструктуры.<br/>"
+        },
+        {
+            "title": "Уникальность проекта «Полиглот»",
+            "body": f"В отличие от классических переводчиков, таких как Google Translate или DeepL, «Полиглот» предлагает принципиально иной подход.<br/>"
+                    f"Открытость вместо «чёрного ящика»<br/>"
+                    f"Коммерческие сервисы работают как закрытые системы: пользователь не влияет на алгоритмы и не понимает, как формируется результат.<br/>"
+                    f"«Полиглот» — это открытая архитектура:<br/>"
+                    f"&#9;• доступ к коду и логике работы <br/>"
+                    f"&#9;• возможность доработки и модификации <br/>"
+                    f"&#9;• участие в развитии качества перевода <br/>"
+                    f"Пользователь становится не просто потребителем, а участником создания продукта."
+        },
+        {
+            "title": "Настраиваемость вместо универсальности",
+            "body": f"Массовые переводчики вынуждены быть «усреднёнными»."
+                    "«Полиглот» позволяет:<br/>"
+                    "&#9;• создавать специализированные языковые пакеты (технические, медицинские, юридические и др.) <br/>"
+                    "&#9;• адаптировать перевод под конкретные задачи <br/>"
+                    "&#9;• учитывать контекст, стиль и терминологию <br/>"
+                    "Это делает его особенно ценным в профессиональной среде, где точность критична.<br/>"
+        },
+    ]
+
+    MODELS_DIR = "./onnx_export/for_web"
+    _model_cache: dict = {}
+    _current_model_name: str | None = None
+
+    app.run(host="0.0.0.0", port=9090)

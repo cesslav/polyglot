@@ -41,8 +41,8 @@ def beam_search(transformer, tokenizer, src, beam_size=10, max_len=256, device="
 
 tokenizer = AutoTokenizer.from_pretrained("./tokenizer/")
 
-checkpoint_dir = "./t5s"
-checkpoint_name = "transformer_epoch_1.pt"
+checkpoint_dir = "./"
+checkpoint_name = "transformer.pt"
 device =  "cpu"
 
 
