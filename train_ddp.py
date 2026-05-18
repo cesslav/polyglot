@@ -117,7 +117,7 @@ def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN",
     last_save = datetime.now()
 
 
-def train_epoch_upd(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=12):
+def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=6):
     model.train()
     total_loss = 0.0
     accum_loss = 0.0
@@ -457,9 +457,7 @@ if __name__ == "__main__":
         train_sampler.set_epoch(epoch)
 
         if progress < 0.9:
-            train_loss = train_epoch_upd(
-                transformer, train_loader, optimizer, scheduler, criterion, device, epoch
-            )
+            train_loss = train_epoch(transformer, train_loader, optimizer, scheduler, criterion, device, epoch, accumulation_steps=192//_total_bs)
         progress = 0
 
         if rank == 0:

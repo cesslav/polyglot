@@ -1,11 +1,8 @@
 import math
-import logging
 from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-logger = logging.getLogger(__name__)
 
 
 class Residual(nn.Module):
@@ -189,7 +186,6 @@ class SelfAttention(nn.Module):
         )
         out = out.transpose(1, 2).contiguous().view(b, n, -1)
         return self.to_out(out)
-
 
 
 class CrossAttention(nn.Module):

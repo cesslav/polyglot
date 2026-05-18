@@ -1,7 +1,11 @@
-/sources/s1024_full/
-/sources/s1024_val/
+/sources
 /onnx_export
+/_extracted
+/cold_saves
+/t5m
+/t5s
 /.idea
+test.py
 .gitignore
 *.onnx
 *.pt

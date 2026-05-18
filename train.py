@@ -97,7 +97,7 @@ def init_weights(m):
 
 
 def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN", progress=0):
-    global last_save, config, cold_save_counter
+    global last_save, config, cold_save_counter, batch_size
     checkpoint = {
         'epoch': epoch,
         'progress': progress,
@@ -117,7 +117,7 @@ def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN",
     last_save = datetime.now()
 
 
-def train_epoch_upd(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=12):
+def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=6):
     model.train()
     total_loss = 0.0
     accum_loss = 0.0
@@ -216,72 +216,6 @@ def train_epoch_upd(model, loader, optimizer, scheduler, criterion, device, num,
                     progress=(loop.format_dict["n"] / loop.format_dict["total"])
                 )
 
-    return total_loss / counter
-
-
-def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=5):
-    model.train()
-    total_loss = 0
-    accum_loss = 0
-    last_thousand_loss = deque(maxlen=1000)
-    counter = 0
-    step = 0
-    skipped = 0
-    loop = tqdm(loader, desc=f"Epoch {num}")
-    for batch in loop:
-
-        src, tgt = batch["input"].to(device).squeeze(), batch["output"].to(device).squeeze()
-
-        with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            # output = model(src, tgt[:, :-1])
-            # loss = criterion(output.contiguous().view(-1, vocab_size), tgt[:, 1:].contiguous().view(-1)) / accumulation_steps
-
-            output_fwd = model(src, tgt[:, :-1])
-            loss_fwd = criterion(
-                output_fwd.contiguous().view(-1, vocab_size),
-                tgt[:, 1:].contiguous().view(-1)
-            )
-
-            output_bwd = model(tgt, src[:, :-1])
-            loss_bwd = criterion(
-                output_bwd.contiguous().view(-1, vocab_size),
-                src[:, 1:].contiguous().view(-1)
-            )
-        loss = (loss_fwd + loss_bwd) / accumulation_steps * 1.5
-        try:
-            loss.backward()
-        except RuntimeError as e:
-            skipped += 1
-            accum_loss = 0
-            optimizer.zero_grad()
-            print(f"Пропуск батча: ошибка backward: {e}, "
-                  f"пропусков: {skipped}")
-
-            continue
-        accum_loss += loss.item()
-        step += 1
-        if step % accumulation_steps == 0 or step == len(loader):
-            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 25)
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
-            total_loss += accum_loss
-            counter += 1
-            last_thousand_loss.append(accum_loss)
-            if counter:
-                loop.set_postfix_str(
-                    f"loss: {accum_loss:.6f}  "
-                    f"avg: {total_loss / counter:.6f}  "
-                    f"avg1k: {sum(last_thousand_loss) / len(last_thousand_loss):.6f}  "
-                    f"max1k: {max(last_thousand_loss):.6f}  "
-                    f"step: {counter} "
-                    f"norm: {total_norm:.6f}  "
-                    f"save: {datetime.now() - last_save} "
-                    f"skipped_steps: {skipped}"
-                )
-            accum_loss = 0
-        if datetime.now() - last_save > timedelta(hours=1):
-            save(model, num, optimizer, scheduler, total_loss / counter, progress=(loop.format_dict["n"] / loop.format_dict["total"]))
     return total_loss / counter
 
 
@@ -459,7 +393,7 @@ if __name__ == "__main__":
 
     for epoch in range(start_epoch+1, num_epochs + 1):
         if progress < 0.9:
-            train_loss = train_epoch_upd(transformer, train_loader, optimizer, scheduler, criterion, device, epoch)
+            train_loss = train_epoch(transformer, train_loader, optimizer, scheduler, criterion, device, epoch, accumulation_steps=192//batch_size)
         progress = 0
         val_loss = evaluate(transformer, val_loader, criterion, device)
 

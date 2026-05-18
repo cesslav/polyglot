@@ -1269,7 +1269,7 @@ def index():
 
 @app.route("/logo")
 def logo():
-    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polylogo.jpg")
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polylogo.png")
     if not os.path.isfile(logo_path):
         return "", 404
     return send_file(logo_path, mimetype="image/jpeg")
