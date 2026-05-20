@@ -98,6 +98,7 @@ def init_weights(m):
 
 def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN", progress=0):
     global last_save, config, cold_save_counter, batch_size
+    os.makedirs("./cold_saves/", exist_ok=True)
     checkpoint = {
         'epoch': epoch,
         'progress': progress,
@@ -236,164 +237,136 @@ if __name__ == "__main__":
     print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
 
     torch.set_float32_matmul_precision('high')
+    train_config = json.load(open("train_config.json", mode="r"))
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
     config = {
-            "d_model": 256,
-            "vocab_size": 48000,
-            "num_layers": 4,
-            "dec_depth_diff": 0,
-            "dim_head": 32,
-            "num_heads": 0,
-            "mlp_mult": 4,
-            "dropout": 0
-        }
+        "d_model": 256,
+        "vocab_size": 48000,
+        "num_layers": 4,
+        "dec_depth_diff": 0,
+        "dim_head": 32,
+        "num_heads": 0,
+        "mlp_mult": 4,
+        "dropout": 0,
+    }
 
-    with open("train_config.txt", "r") as config_file:
-        is_continue = int(config_file.readline())
-        checkpoint_dir = config_file.readline().replace("\n", "")
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        checkpoint_name = config_file.readline().replace("\n", "")
-        print(os.path.join(checkpoint_dir, checkpoint_name))
-        if not (checkpoint_name and os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name))) and is_continue:
-            is_continue = 0
-            checkpoint_name = ""
-            print("Указано пустое имя файла при продолжении обучения!")
-            if not os.path.isfile(os.path.join(checkpoint_dir, checkpoint_name)) and checkpoint_name:
-                print(os.path.join(checkpoint_dir, checkpoint_name))
-                print("Файл контрольной точки не найден!")
+    num_epochs = train_config["max_epochs"]
+    batch_size = train_config["batch_size"][-1]
+    is_continue = train_config["continue"]
+    checkpoint_dir = train_config["save_dir"]
+    checkpoint_name = train_config["checkpoint"]
 
-        try:
-            batch_size = int(config_file.readline())
-        except Exception as e:
-            batch_size = 1
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    print(os.path.join(checkpoint_dir, checkpoint_name))
 
-        try:
-            num_epochs = int(config_file.readline())
-        except Exception as e:
-            num_epochs = 200
-        if not is_continue:
-            try:
-                base_lr = float(config_file.readline())
-            except Exception as e:
-                base_lr = 1e-3
-
-            try:
-                lr_decay = float(config_file.readline())
-            except Exception as e:
-                lr_decay = 0.85
-
-            float_keys = {"dropout"}
-            for key in config.keys():
-                try:
-                    line = config_file.readline()
-                    config[key] = float(line) if key in float_keys else int(line)
-                except Exception:
-                    pass
-
-            if config["num_heads"] == 0:
-                config["num_heads"] = config["d_model"] // config["dim_head"]
-            transformer = Transformer(
-                dim=config["d_model"],
-                enc_num_tokens=config["vocab_size"],
-                enc_depth=config["num_layers"],
-                enc_heads=config["num_heads"],
-                enc_dim_head=config["dim_head"],
-                enc_mlp_mult=config["mlp_mult"],
-                dec_num_tokens=config["vocab_size"],
-                dec_depth=config["num_layers"] + config["dec_depth_diff"],
-                dec_heads=config["num_heads"],
-                dec_dim_head=config["dim_head"],
-                dec_mlp_mult=config["mlp_mult"],
-                dropout=config["dropout"],
-                tie_token_emb=True
-            ).to(device)
-
-            param_groups = get_transformer_lrd(
-                transformer,
-                base_lr=base_lr,
-                decay=lr_decay,
-                weight_decay=0.01
-            )
-
-            optimizer = optim.AdamW(
-                param_groups,
-                betas=(0.9, 0.98),
-                eps=1e-9,
-                fused=True
-            )
-            scheduler = get_transformer_scheduler(optimizer, warmup_steps=32000)
-            transformer.apply(init_weights)
-            start_epoch = 0
-            progress = 0
-            vocab_size = config["vocab_size"]
-
+    if is_continue:
+        ckpt_path = os.path.join(checkpoint_dir, checkpoint_name)
+        if not checkpoint_name:
+            print("Указано пустое имя файла при продолжении обучения! Запуск с нуля.")
+            is_continue = False
+        elif not os.path.isfile(ckpt_path):
+            print(f"Файл контрольной точки не найден: {ckpt_path}. Запуск с нуля.")
+            is_continue = False
         else:
-            checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False, map_location=device)
-            config = checkpoint["config"]
-            transformer = Transformer(
-                dim=config["d_model"],
-                enc_num_tokens=config["vocab_size"],
-                enc_depth=config["num_layers"],
-                enc_heads=config["num_heads"],
-                enc_dim_head=config["dim_head"],
-                enc_mlp_mult=config["mlp_mult"],
-                dec_num_tokens=config["vocab_size"],
-                dec_depth=config["num_layers"] + config["dec_depth_diff"],
-                dec_heads=config["num_heads"],
-                dec_dim_head=config["dim_head"],
-                dec_mlp_mult=config["mlp_mult"],
-                dropout=config["dropout"],
-                tie_token_emb=True
-            ).to(device)
+            print(f"Чекпоинт: {ckpt_path}")
 
-            param_groups = get_transformer_lrd(
-                transformer,
-                base_lr=0.000003,
-                decay=0.9,
-                weight_decay=0.01
-            )
-            optimizer = optim.AdamW(
-                param_groups,
-                betas=(0.9, 0.98),
-                eps=1e-9,
-                fused=True
-            )
-            scheduler = get_transformer_scheduler(optimizer, warmup_steps=8000)
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    if not is_continue:
+        if config["num_heads"] == 0:
+            config["num_heads"] = config["d_model"] // config["dim_head"]
 
-            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-            transformer.load_state_dict(checkpoint["model_state_dict"], strict=False)
-            print("Контрольная точка успешно загружена!")
-            progress = checkpoint["progress"]
-            train_loss = checkpoint["train_loss"]
-            start_epoch = checkpoint["epoch"] - 1
-            vocab_size = config["vocab_size"]
-            for i in range(10):
-                _ = config_file.readline()
-        print("model initialized!")
-        print(config)
-        print(sum([p.numel() for p in transformer.parameters() if p.requires_grad]) / 1000000000)
-        print(torch.cuda.memory_allocated() / 1024 ** 3)
-        try:
-            train_loader = DataLoader(load_from_disk(os.path.join(config_file.readline()).replace("\n", "")),
-                                      batch_size=batch_size, shuffle=True, num_workers=12, pin_memory=True,
-                                      drop_last=True, persistent_workers=True,)
-            val_loader = DataLoader(load_from_disk(os.path.join(config_file.readline()).replace("\n", "")),
-                                    batch_size=batch_size, num_workers=12, pin_memory=True, persistent_workers=True,)
-        except Exception as e:
-            print(e)
-            sys.exit(1)
+        transformer = Transformer(
+            dim=config["d_model"],
+            enc_num_tokens=config["vocab_size"],
+            enc_depth=config["num_layers"],
+            enc_heads=config["num_heads"],
+            enc_dim_head=config["dim_head"],
+            enc_mlp_mult=config["mlp_mult"],
+            dec_num_tokens=config["vocab_size"],
+            dec_depth=config["num_layers"] + config["dec_depth_diff"],
+            dec_heads=config["num_heads"],
+            dec_dim_head=config["dim_head"],
+            dec_mlp_mult=config["mlp_mult"],
+            dropout=config["dropout"],
+            tie_token_emb=True,
+        ).to(device)
+
+        param_groups = get_transformer_lrd(transformer, base_lr=train_config["init_lr"],
+                                           decay=train_config["lr_decay"], weight_decay=0.01)
+        optimizer = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-9, fused=True)
+        scheduler = get_transformer_scheduler(optimizer, warmup_steps=32000)
+        transformer.apply(init_weights)
+        start_epoch = 0
+        progress = 0
+        vocab_size = config["vocab_size"]
+
+    else:
+        ckpt = torch.load(
+            os.path.join(checkpoint_dir, checkpoint_name),
+            weights_only=False,
+            map_location=device,
+        )
+        config = ckpt["config"]
+
+        transformer = Transformer(
+            dim=config["d_model"],
+            enc_num_tokens=config["vocab_size"],
+            enc_depth=config["num_layers"],
+            enc_heads=config["num_heads"],
+            enc_dim_head=config["dim_head"],
+            enc_mlp_mult=config["mlp_mult"],
+            dec_num_tokens=config["vocab_size"],
+            dec_depth=config["num_layers"] + config["dec_depth_diff"],
+            dec_heads=config["num_heads"],
+            dec_dim_head=config["dim_head"],
+            dec_mlp_mult=config["mlp_mult"],
+            dropout=config["dropout"],
+            tie_token_emb=True,
+        ).to(device)
+
+        param_groups = get_transformer_lrd(transformer, base_lr=1, decay=1, weight_decay=0.01)
+        optimizer = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-9, fused=True)
+        scheduler = get_transformer_scheduler(optimizer, warmup_steps=8000)
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        transformer.load_state_dict(ckpt["model_state_dict"], strict=False)
+        print("Контрольная точка успешно загружена!")
+        progress = ckpt["progress"]
+        train_loss = ckpt["train_loss"]
+        start_epoch = ckpt["epoch"] - 1
+        vocab_size = config["vocab_size"]
+
+    print("model initialized!")
+    print(config)
+    print(sum(p.numel() for p in transformer.parameters() if p.requires_grad) / 1e9)
+    print(torch.cuda.memory_allocated() / 1024 ** 3)
+
+    try:
+        train_loader = DataLoader(
+            load_from_disk(train_config["train_ds_dir"]),
+            batch_size=batch_size, shuffle=True, num_workers=12,
+            pin_memory=True, drop_last=True, persistent_workers=True,
+        )
+        val_loader = DataLoader(
+            load_from_disk(train_config["val_ds_dir"]),
+            batch_size=batch_size, num_workers=12,
+            pin_memory=True, persistent_workers=True,
+        )
+    except Exception as e:
+        print(e)
+        sys.exit(1)
 
     criterion = nn.CrossEntropyLoss(ignore_index=3, label_smoothing=0.05)
-
 
     cold_save_counter = 0
     time.sleep(0.5)
     last_save = datetime.now()
 
-    for epoch in range(start_epoch+1, num_epochs + 1):
+    for epoch in range(start_epoch + 1, num_epochs + 1):
         if progress < 0.9:
-            train_loss = train_epoch(transformer, train_loader, optimizer, scheduler, criterion, device, epoch, accumulation_steps=192//batch_size)
+            train_loss = train_epoch(transformer, train_loader, optimizer, scheduler, criterion, device, epoch,
+                                     accumulation_steps=192 // batch_size)
         progress = 0
         val_loss = evaluate(transformer, val_loader, criterion, device)
 
