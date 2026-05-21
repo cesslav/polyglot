@@ -142,14 +142,19 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
                     output_fwd.reshape(-1, vocab_size),
                     tgt[:, 1:].reshape(-1)
                 ) / accumulation_steps * grad_scale
-            loss_fwd.backward()
+            with model.no_sync():
+                loss_fwd.backward()
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                 output_bwd = model(tgt, src[:, :-1])
                 loss_bwd = criterion(
                     output_bwd.reshape(-1, vocab_size),
                     src[:, 1:].reshape(-1)
                 ) / accumulation_steps * grad_scale
-            loss_bwd.backward()
+            if step % accumulation_steps != accumulation_steps - 1:
+                with model.no_sync():
+                    loss_bwd.backward()
+            else:
+                loss_bwd.backward()
 
         except RuntimeError as e:
             skipped += 1
@@ -242,13 +247,8 @@ if __name__ == "__main__":
         )
         sys.exit(ret.returncode)
 
-
-    # os.environ['HIP_VISIBLE_DEVICES'] = "0,1"
-    # os.environ['HSA_OVERRIDE_GFX_VERSION'] = "11.0.0"
-
     torch.set_float32_matmul_precision('high')
     train_config = json.load(open("train_config.json", mode="r"))
-
 
 
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -354,7 +354,6 @@ if __name__ == "__main__":
             tie_token_emb=True,
         ).to(device)
 
-        # lr и lr_decay берём из JSON, чтобы можно было задавать при дообучении
         param_groups = get_transformer_lrd(transformer, base_lr=1, decay=1, weight_decay=0.01)
         optimizer = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-9, fused=True)
         scheduler = get_transformer_scheduler(optimizer, warmup_steps=8000)

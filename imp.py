@@ -166,7 +166,6 @@ class SelfAttention(nn.Module):
         v = v.view(b, n, h, -1).transpose(1, 2)
 
         attn_bias = self.rel_pos.get_bias(n, n).unsqueeze(0)
-
         neg_inf = torch.finfo(q.dtype).min
 
         if mask is not None:
@@ -336,7 +335,6 @@ class Decoder(nn.Module):
             x = cross_attn(x, context=context, mask=mask, context_mask=context_mask)
             x = mlp(x)
         return self.final_norm(x)
-
 
 
 class Transformer(nn.Module):
