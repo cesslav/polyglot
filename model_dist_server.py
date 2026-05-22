@@ -13,6 +13,9 @@ app = FastAPI(
     version="1.0.0",
 )
 
+MODELS_DIR = Path(os.getenv("MODELS_DIR", "./onnx_export/models"))
+REQUIRED_FILES = {"encoder.onnx", "decoder.onnx", "tokenizer/tokenizer.json"}
+
 
 class ModelInfo(BaseModel):
     name: str
@@ -92,9 +95,6 @@ def favicon():
 if __name__ == "__main__":
     print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
     import uvicorn
-
-    MODELS_DIR = Path(os.getenv("MODELS_DIR", "./onnx_export/models"))
-    REQUIRED_FILES = {"encoder.onnx", "decoder.onnx", "tokenizer/tokenizer.json"}
 
     if not MODELS_DIR.exists():
         print(f"[!] Папка моделей не найдена: {MODELS_DIR.resolve()}")
