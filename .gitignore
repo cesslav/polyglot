@@ -1,7 +1,7 @@
 /sources
 /onnx_export
 /_extracted
-/cold_saves
+/cold_saves_1024
 /t5m
 /t5s
 /.idea

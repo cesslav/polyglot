@@ -23,20 +23,20 @@ except ImportError:
     ONNX_AVAILABLE = False
 
 
-COLOR_BG         = "#000000"
-COLOR_SURFACE    = "#0d0d0d"
-COLOR_BORDER     = "#5cb84b"
-COLOR_TEXT       = "#ffffff"
-COLOR_MUTED      = "#888888"
-COLOR_ACCENT     = "#5cb84b"
+COLOR_BG = "#000000"
+COLOR_SURFACE = "#0d0d0d"
+COLOR_BORDER = "#5cb84b"
+COLOR_TEXT = "#ffffff"
+COLOR_MUTED = "#888888"
+COLOR_ACCENT = "#5cb84b"
 COLOR_ACCENT_DIM = "#1F3A1F"
-COLOR_ORANGE     = "#FFA500"
-COLOR_RED        = "#b84848"
-COLOR_SECONDARY  = "#1F3A1F"
+COLOR_ORANGE = "#FFA500"
+COLOR_RED = "#b84848"
+COLOR_SECONDARY = "#1F3A1F"
 
-MAX_INPUT_CHARS  = 2000
-MAX_OUTPUT_LEN   = 1024
-TOKEN_LEN_STEPS  = list(range(64, 513, 64))
+MAX_INPUT_CHARS = 2000
+MAX_OUTPUT_LEN = 1024
+TOKEN_LEN_STEPS = list(range(64, 513, 64))
 
 CONTENT_MAX_WIDTH = 900
 CONTENT_MAX_HEIGHT = 1000
@@ -131,7 +131,7 @@ def accent_btn(text, small=False):
             font-weight: bold;
             font-size: {fs};
         }}
-        QPushButton:hover   {{ background-color: #6ed45a; }}
+        QPushButton:hover {{ background-color: #6ed45a; }}
         QPushButton:pressed {{ background-color: #4aa03a; }}
         QPushButton:disabled {{ background-color: #2a4a24; color: #555555; }}
     """)
@@ -152,9 +152,9 @@ def outline_btn(text, color=COLOR_ACCENT, small=False):
             font-weight: bold;
             font-size: 13px;
         }}
-        QPushButton:hover   {{ background-color: rgba(92,184,75,0.12); }}
-        QPushButton:pressed {{ background-color: rgba(92,184,75,0.2);  }}
-        QPushButton:disabled {{ color: #555555; border-color: #555555;  }}
+        QPushButton:hover {{ background-color: rgba(92,184,75,0.12); }}
+        QPushButton:pressed {{ background-color: rgba(92,184,75,0.2); }}
+        QPushButton:disabled {{ color: #555555; border-color: #555555; }}
     """)
     return btn
 
@@ -172,7 +172,7 @@ def delete_btn(text):
             font-weight: bold;
             font-size: 13px;
         }}
-        QPushButton:hover   {{ background-color: #aa0000; }}
+        QPushButton:hover {{ background-color: #aa0000; }}
         QPushButton:pressed {{ background-color: #6a0000; }}
     """)
     return btn
@@ -271,15 +271,15 @@ class UnigramTokenizer:
 
         for tok in data.get("added_tokens", []):
             tid, content = tok["id"], tok.get("content", "")
-            if   "bos" in content.lower(): self.bos_id = tid
+            if "bos" in content.lower(): self.bos_id = tid
             elif "eos" in content.lower(): self.eos_id = tid
             elif "unk" in content.lower(): self.unk_id = tid
             elif "pad" in content.lower(): self.pad_id = tid
 
         vocab_arr = data["model"]["vocab"]
         self._id_to_token = [entry[0] for entry in vocab_arr]
-        self._vocab_score  = {entry[0]: float(entry[1]) for entry in vocab_arr}
-        self._token_to_id  = {entry[0]: i for i, entry in enumerate(vocab_arr)}
+        self._vocab_score = {entry[0]: float(entry[1]) for entry in vocab_arr}
+        self._token_to_id = {entry[0]: i for i, entry in enumerate(vocab_arr)}
 
     def _viterbi(self, text: str) -> list:
         n = len(text)
@@ -287,20 +287,20 @@ class UnigramTokenizer:
             return []
         NEG_INF = float("-inf")
         dp_score = [NEG_INF] * (n + 1)
-        dp_from  = [-1]      * (n + 1)
+        dp_from = [-1] * (n + 1)
         dp_score[0] = 0.0
         for end in range(1, n + 1):
             for start in range(max(0, end - self.MAX_TOKEN_LEN), end):
                 if dp_score[start] == NEG_INF:
                     continue
-                sub   = text[start:end]
+                sub = text[start:end]
                 score = self._vocab_score.get(sub)
                 if score is None:
                     continue
                 total = dp_score[start] + score
                 if total > dp_score[end]:
                     dp_score[end] = total
-                    dp_from[end]  = start
+                    dp_from[end] = start
         if dp_score[n] == NEG_INF:
             return list(text)
         result, pos = [], n
@@ -314,7 +314,7 @@ class UnigramTokenizer:
     def _pretokenize(self, text: str) -> list:
         if not text:
             return []
-        raw   = "▁" + text.replace(" ", "▁")
+        raw = "▁" + text.replace(" ", "▁")
         parts = raw.split("▁")
         return ["▁" + p for p in parts if p]
 
@@ -370,11 +370,11 @@ def _np_log_softmax(x):
 
 def greedy_search(model, tokenizer, src_tokens, max_len=MAX_OUTPUT_LEN, on_token=None):
     bos, eos = tokenizer.bos_id, tokenizer.eos_id
-    memory   = model.encode(src_tokens[np.newaxis, :])
-    tokens   = [bos]
+    memory = model.encode(src_tokens[np.newaxis, :])
+    tokens = [bos]
     for _ in range(max_len - 1):
-        tgt     = np.array([tokens], dtype=np.int64)
-        logits  = model.decode(tgt, memory)
+        tgt = np.array([tokens], dtype=np.int64)
+        logits = model.decode(tgt, memory)
         next_id = int(np.argmax(logits[0, -1, :]))
         tokens.append(next_id)
         if on_token:
@@ -386,19 +386,18 @@ def greedy_search(model, tokenizer, src_tokens, max_len=MAX_OUTPUT_LEN, on_token
 
 def beam_search(model, tokenizer, src_tokens, beam_size=4, max_len=MAX_OUTPUT_LEN, on_token=None):
     bos, eos = tokenizer.bos_id, tokenizer.eos_id
-    memory   = model.encode(src_tokens[np.newaxis, :])
-    beams    = [(np.array([[bos]], dtype=np.int64), 0.0)]
+    memory = model.encode(src_tokens[np.newaxis, :])
+    beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
     for _ in range(max_len):
         new_beams = []
         for seq, score in beams:
             if seq[0, -1] == eos:
                 new_beams.append((seq, score)); continue
-            logits    = model.decode(seq, memory)
+            logits = model.decode(seq, memory)
             log_probs = _np_log_softmax(logits[:, -1, :])
-            topk      = np.argsort(-log_probs, axis=-1)[0][:beam_size]
+            topk = np.argsort(-log_probs, axis=-1)[0][:beam_size]
             for k in topk:
-                new_beams.append((np.concatenate([seq, [[k]]], axis=1),
-                                  score + float(log_probs[0, k])))
+                new_beams.append((np.concatenate([seq, [[k]]], axis=1), score + float(log_probs[0, k])))
         beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
         if on_token:
             on_token(beams[0][0][0])
@@ -428,8 +427,8 @@ class ModelDownloadManager:
     def download_model(cls, file: str, dest_dir: Path, on_progress=None):
         r = requests.get(f"{cls.base_url}/models/{file}", stream=True, timeout=60)
         r.raise_for_status()
-        total      = int(r.headers.get("content-length", 0))
-        zip_path   = dest_dir / file
+        total = int(r.headers.get("content-length", 0))
+        zip_path = dest_dir / file
         downloaded = 0
         with open(zip_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
@@ -440,7 +439,7 @@ class ModelDownloadManager:
                         on_progress(int(downloaded * 100 / total), False)
         if on_progress:
             on_progress(100, True)
-        stem      = file.removesuffix(".zip")
+        stem = file.removesuffix(".zip")
         model_dir = dest_dir / stem
         model_dir.mkdir(exist_ok=True)
         with zipfile.ZipFile(zip_path) as z:
@@ -451,25 +450,25 @@ class ModelDownloadManager:
 
 class InferenceWorker(QThread):
     partial_result = pyqtSignal(str)
-    finished       = pyqtSignal(str, float, int)
-    error          = pyqtSignal(str)
+    finished = pyqtSignal(str, float, int)
+    error = pyqtSignal(str)
 
     def __init__(self, model, tokenizer, text):
         super().__init__()
-        self.model     = model
+        self.model = model
         self.tokenizer = tokenizer
-        self.text      = text
+        self.text = text
 
     def run(self):
         try:
             tok = self.tokenizer
             mdl = self.model
-            t0  = time.perf_counter()
+            t0 = time.perf_counter()
             raw = tok.encode(self.text, TOKEN_LEN_STEPS[-1])
-            nz  = np.where(raw != tok.pad_id)[0]
-            actual  = int(nz[-1]) + 1 if len(nz) else 1
+            nz = np.where(raw != tok.pad_id)[0]
+            actual = int(nz[-1]) + 1 if len(nz) else 1
             src_len = next((n for n in TOKEN_LEN_STEPS if n >= actual), TOKEN_LEN_STEPS[-1])
-            src     = raw[:src_len]
+            src = raw[:src_len]
 
             token_count = [0]
 
@@ -477,7 +476,7 @@ class InferenceWorker(QThread):
                 token_count[0] += 1
                 self.partial_result.emit(tok.decode(tokens))
 
-            out     = greedy_search(mdl, tok, src, max_len=MAX_OUTPUT_LEN, on_token=on_tok)
+            out = greedy_search(mdl, tok, src, max_len=MAX_OUTPUT_LEN, on_token=on_tok)
             elapsed = time.perf_counter() - t0
             self.finished.emit(tok.decode(out), elapsed, token_count[0])
         except Exception as e:
@@ -487,11 +486,11 @@ class InferenceWorker(QThread):
 class DownloadWorker(QThread):
     progress = pyqtSignal(str, int, bool)
     finished = pyqtSignal(str)
-    error    = pyqtSignal(str, str)
+    error = pyqtSignal(str, str)
 
     def __init__(self, file: str, dest_dir: Path):
         super().__init__()
-        self.file     = file
+        self.file = file
         self.dest_dir = dest_dir
 
     def run(self):
@@ -507,7 +506,7 @@ class DownloadWorker(QThread):
 
 class FetchListWorker(QThread):
     result = pyqtSignal(list)
-    error  = pyqtSignal(str)
+    error = pyqtSignal(str)
 
     def run(self):
         try:
@@ -529,7 +528,7 @@ class PingWorker(QThread):
 
 class ModelCard(QFrame):
     download_clicked = pyqtSignal(dict)
-    delete_clicked   = pyqtSignal(dict)
+    delete_clicked = pyqtSignal(dict)
 
     CARD_STYLE = f"""
         QFrame {{
@@ -543,7 +542,7 @@ class ModelCard(QFrame):
     def __init__(self, model_info: dict, installed: bool, parent=None):
         super().__init__(parent)
         self.model_info = model_info
-        self.installed  = installed
+        self.installed = installed
         self.setStyleSheet(self.CARD_STYLE)
         self._build()
 
@@ -586,7 +585,7 @@ class ModelCard(QFrame):
 
         layout.addLayout(left_col, 1)
 
-        self.dl_btn  = accent_btn("Скачать", small=True)
+        self.dl_btn = accent_btn("Скачать", small=True)
         self.del_btn = delete_btn("Удалить")
         self.dl_btn.setFixedWidth(90)
         self.del_btn.setFixedWidth(90)
@@ -636,9 +635,9 @@ class ModelCard(QFrame):
 class TranslateScreen(QWidget):
     def __init__(self):
         super().__init__()
-        self.model:     OnnxTransformer | None  = None
+        self.model: OnnxTransformer | None = None
         self.tokenizer: UnigramTokenizer | None = None
-        self.worker:    InferenceWorker  | None = None
+        self.worker: InferenceWorker | None = None
         self._model_dirs: list = []
         self._setup_ui()
 
@@ -777,7 +776,7 @@ class TranslateScreen(QWidget):
         parts = stem.split("-")
         if (len(parts) >= 2 and
                 all(p.isalpha() and len(p) <= 3 for p in parts[:2])):
-            arrow  = f"{parts[0].upper()} -> {parts[1].upper()}"
+            arrow = f"{parts[0].upper()} -> {parts[1].upper()}"
             suffix = " ".join(p.capitalize() for p in parts[2:])
             return f"{arrow} {suffix}".strip()
         return " ".join(p.capitalize() for p in parts)
@@ -791,7 +790,7 @@ class TranslateScreen(QWidget):
         self.status_lbl.setText("Загрузка…")
         try:
             self.tokenizer = UnigramTokenizer(path)
-            self.model     = OnnxTransformer(path)
+            self.model = OnnxTransformer(path)
             self.translate_btn.setEnabled(True)
             self.status_lbl.setText("")
         except Exception as e:
@@ -809,7 +808,7 @@ class TranslateScreen(QWidget):
             self.input_edit.setTextCursor(cursor)
             text = text[:MAX_INPUT_CHARS]
 
-        n     = len(text)
+        n = len(text)
         ratio = n / MAX_INPUT_CHARS
         color = COLOR_RED if ratio >= 1.0 else (COLOR_ORANGE if ratio >= 0.8 else COLOR_MUTED)
         self.char_count_lbl.setText(f"{n} / {MAX_INPUT_CHARS}")
@@ -1095,7 +1094,7 @@ class AboutScreen(QWidget):
 
         def link_section(title: str, links: list):
             card = neon_card()
-            cl   = QVBoxLayout(card)
+            cl = QVBoxLayout(card)
             cl.setContentsMargins(14, 12, 14, 12)
             cl.setSpacing(8)
             t = QLabel(title)
@@ -1111,8 +1110,8 @@ class AboutScreen(QWidget):
             ("Сайт проекта", "http://igorpet.ru:9090"),
         ]))
         layout.addWidget(link_section("Для разработчиков", [
-            ("Репозиторий приложения",     "https://github.com/cesslav/Polyglot_Mobile"),
-            ("Инструментарий разработки",  "https://github.com/cesslav/polyglot"),
+            ("Репозиторий приложения", "https://github.com/cesslav/Polyglot_Mobile"),
+            ("Инструментарий разработки", "https://github.com/cesslav/polyglot"),
         ]))
 
         lic = QLabel(
@@ -1204,9 +1203,9 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
 
-        self.translate_screen  = TranslateScreen()
-        self.downloads_screen  = DownloadsScreen()
-        self.about_screen      = AboutScreen()
+        self.translate_screen = TranslateScreen()
+        self.downloads_screen = DownloadsScreen()
+        self.about_screen = AboutScreen()
 
         self.stack.addWidget(self.translate_screen)
         self.stack.addWidget(self.downloads_screen)
@@ -1237,13 +1236,13 @@ def main():
     app.setStyleSheet(GLOBAL_STYLE)
 
     palette = QPalette()
-    palette.setColor(QPalette.Window,          QColor(COLOR_BG))
-    palette.setColor(QPalette.WindowText,      QColor(COLOR_TEXT))
-    palette.setColor(QPalette.Base,            QColor(COLOR_SURFACE))
-    palette.setColor(QPalette.Text,            QColor(COLOR_TEXT))
-    palette.setColor(QPalette.Button,          QColor(COLOR_SURFACE))
-    palette.setColor(QPalette.ButtonText,      QColor(COLOR_TEXT))
-    palette.setColor(QPalette.Highlight,       QColor(COLOR_ACCENT))
+    palette.setColor(QPalette.Window,     QColor(COLOR_BG))
+    palette.setColor(QPalette.WindowText, QColor(COLOR_TEXT))
+    palette.setColor(QPalette.Base,       QColor(COLOR_SURFACE))
+    palette.setColor(QPalette.Text,       QColor(COLOR_TEXT))
+    palette.setColor(QPalette.Button,     QColor(COLOR_SURFACE))
+    palette.setColor(QPalette.ButtonText, QColor(COLOR_TEXT))
+    palette.setColor(QPalette.Highlight, QColor(COLOR_ACCENT))
     palette.setColor(QPalette.HighlightedText, QColor("#000000"))
     app.setPalette(palette)
 

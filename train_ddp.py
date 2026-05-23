@@ -303,9 +303,10 @@ if __name__ == "__main__":
                 print(f"Чекпоинт: {ckpt_path}")
 
     if not is_continue:
+        for i in config.keys():
+            config[i] = train_config[i]
         if config["num_heads"] == 0:
             config["num_heads"] = config["d_model"] // config["dim_head"]
-
         transformer = Transformer(
             dim=config["d_model"],
             enc_num_tokens=config["vocab_size"],
@@ -324,7 +325,7 @@ if __name__ == "__main__":
 
         param_groups = get_transformer_lrd(transformer, base_lr=train_config["init_lr"], decay=train_config["lr_decay"], weight_decay=0.01)
         optimizer = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-9, fused=True)
-        scheduler = get_transformer_scheduler(optimizer, warmup_steps=32000)
+        scheduler = get_transformer_scheduler(optimizer, warmup_steps=3000)
         transformer.apply(init_weights)
         start_epoch = 0
         progress = 0
