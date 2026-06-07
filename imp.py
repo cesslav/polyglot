@@ -1,3 +1,4 @@
+# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import math
 from typing import Optional
 import torch
@@ -57,8 +58,8 @@ class RelativePositionBias(nn.Module):
             self,
             scale: float,
             causal: bool,
-            num_buckets: int = 32,
-            max_distance: int = 128,
+            num_buckets: int = 64,
+            max_distance: int = 512,
             heads: int = 12,
             max_seq_len: int = 1024,
     ):
