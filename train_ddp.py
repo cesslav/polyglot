@@ -1,7 +1,7 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import sys
-import time
 import json
+import time
 from datetime import datetime, timedelta
 import torch
 import torch.nn as nn
@@ -24,13 +24,12 @@ def get_transformer_scheduler(optimizer, warmup_steps):
         if step < warmup_steps:
             return step / warmup_steps
         return (warmup_steps ** 0.65) / (step ** 0.65)
-
     return LambdaLR(optimizer, lr_lambda)
 
 
 def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
-    encoder_layers = len(model.encoder.layer)
-    decoder_layers = len(model.decoder.layer)
+    encoder_layers = len(model.encoder.layers)
+    decoder_layers = len(model.decoder.layers)
     max_depth = encoder_layers + decoder_layers + 1
 
     no_decay = {"bias", "gamma", "beta"}
@@ -46,11 +45,11 @@ def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
 
         if "token_emb" in name:
             depth = 0
-        elif "encoder.layer" in name:
-            idx = int(name.split("encoder.layer.")[1].split(".")[0])
+        elif "encoder.layers" in name:
+            idx = int(name.split("encoder.layers.")[1].split(".")[0])
             depth = idx + 1
-        elif "decoder.layer" in name:
-            idx = int(name.split("decoder.layer.")[1].split(".")[0])
+        elif "decoder.layers" in name:
+            idx = int(name.split("decoder.layers.")[1].split(".")[0])
             depth = encoder_layers + idx + 1
         else:
             depth = max_depth
@@ -79,10 +78,6 @@ def init_weights(m):
             m.bias.data.fill_(0.01)
     elif isinstance(m, nn.Embedding):
         nn.init.normal_(m.weight, mean=0.0, std=0.02)
-    elif isinstance(m, nn.LayerNorm):
-        nn.init.constant_(m.bias, 0)
-        if m.bias is not None:
-            nn.init.constant_(m.weight, 1.0)
 
 
 def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN", progress=0):
@@ -259,7 +254,6 @@ if __name__ == "__main__":
     device = f"cuda:{local_rank}"
     device_type = "cuda"
 
-
     config = {
         "d_model": 256,
         "vocab_size": 48000,
@@ -275,18 +269,14 @@ if __name__ == "__main__":
     batch_size = train_config["batch_size"][rank] if rank < len(train_config["batch_size"]) else train_config["batch_size"][-1]
     is_continue = train_config["continue"]
     checkpoint_dir = train_config["save_dir"]
+    checkpoint_name = train_config["checkpoint"]
 
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
-
     dist.barrier()
-    checkpoint_name = train_config["checkpoint"]
+
     if rank == 0:
         print(os.path.join(checkpoint_dir, checkpoint_name))
-
-    if rank == 0:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-    dist.barrier()
 
     if is_continue:
         ckpt_path = os.path.join(checkpoint_dir, checkpoint_name)
@@ -303,10 +293,12 @@ if __name__ == "__main__":
                 print(f"Чекпоинт: {ckpt_path}")
 
     if not is_continue:
-        for i in config.keys():
-            config[i] = train_config[i]
+        for key in config:
+            if key in train_config:
+                config[key] = train_config[key]
         if config["num_heads"] == 0:
             config["num_heads"] = config["d_model"] // config["dim_head"]
+
         transformer = Transformer(
             dim=config["d_model"],
             enc_num_tokens=config["vocab_size"],
@@ -332,11 +324,7 @@ if __name__ == "__main__":
         vocab_size = config["vocab_size"]
 
     else:
-        ckpt = torch.load(
-            os.path.join(checkpoint_dir, checkpoint_name),
-            weights_only=False,
-            map_location="cpu",
-        )
+        ckpt = torch.load(ckpt_path, weights_only=False, map_location="cpu")
         config = ckpt["config"]
 
         transformer = Transformer(
@@ -361,7 +349,6 @@ if __name__ == "__main__":
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         transformer.load_state_dict(ckpt["model_state_dict"], strict=False)
-
         if rank == 0:
             print("Контрольная точка успешно загружена!")
         progress = ckpt["progress"]
@@ -387,30 +374,18 @@ if __name__ == "__main__":
     try:
         train_dataset = load_from_disk(train_config["train_ds_dir"])
         train_sampler = DistributedSampler(
-            train_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True,
-            drop_last=True,
+            train_dataset, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True,
         )
         train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            sampler=train_sampler,
-            num_workers=6,
-            pin_memory=True,
-            drop_last=True,
-            persistent_workers=True,
+            train_dataset, batch_size=batch_size, sampler=train_sampler,
+            num_workers=6, pin_memory=True, drop_last=True, persistent_workers=True,
         )
 
         if rank == 0:
             val_dataset = load_from_disk(train_config["val_ds_dir"])
             val_loader = DataLoader(
-                val_dataset,
-                batch_size=batch_size,
-                num_workers=6,
-                pin_memory=True,
-                persistent_workers=True,
+                val_dataset, batch_size=batch_size,
+                num_workers=6, pin_memory=True, persistent_workers=True,
             )
         else:
             val_loader = None
@@ -420,19 +395,20 @@ if __name__ == "__main__":
         dist.destroy_process_group()
         sys.exit(1)
 
-
     criterion = nn.CrossEntropyLoss(ignore_index=3, label_smoothing=0.05)
 
     cold_save_counter = 0
     time.sleep(0.5)
     last_save = datetime.now()
 
-
     for epoch in range(start_epoch + 1, num_epochs + 1):
         train_sampler.set_epoch(epoch)
 
         if progress < 0.9:
-            train_loss = train_epoch(transformer, train_loader, optimizer, scheduler, criterion, device, epoch, accumulation_steps=288//_total_bs)
+            train_loss = train_epoch(
+                transformer, train_loader, optimizer, scheduler, criterion, device, epoch,
+                accumulation_steps=12
+            )
         progress = 0
 
         if rank == 0:

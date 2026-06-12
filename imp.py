@@ -1,9 +1,19 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import math
-from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-8):
+        super().__init__()
+        self.eps = eps
+        self.gamma = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()
+        return x * rms * self.gamma
 
 
 class Residual(nn.Module):
@@ -15,21 +25,10 @@ class Residual(nn.Module):
         return self.fn(x, **kwargs) + x
 
 
-class LayerNorm(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.gamma = nn.Parameter(torch.ones(dim))
-        self.beta = nn.Parameter(torch.zeros(dim))
-        self.dim = dim
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.layer_norm(x, (self.dim,), self.gamma, self.beta)
-
-
 class PreNorm(nn.Module):
     def __init__(self, dim: int, fn: nn.Module):
         super().__init__()
-        self.norm = LayerNorm(dim)
+        self.norm = RMSNorm(dim)
         self.fn = fn
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -37,353 +36,309 @@ class PreNorm(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim: int, mult: int = 4, dropout: float = 0.):
+    def __init__(self, dim: int, mult: int = 4, dropout: float = 0.0):
         super().__init__()
         inner_dim = int(dim * mult)
-        self.w1 = nn.Linear(dim, inner_dim)
-        self.w2 = nn.Linear(dim, inner_dim)
-        self.out = nn.Linear(inner_dim, dim)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.silu(self.w1(x)) * self.w2(x)
-        x = self.dropout1(x)
-        x = self.dropout2(self.out(x))
-        return x
-
-
-class RelativePositionBias(nn.Module):
-    def __init__(
-            self,
-            scale: float,
-            causal: bool,
-            num_buckets: int = 64,
-            max_distance: int = 512,
-            heads: int = 12,
-            max_seq_len: int = 1024,
-    ):
-        super().__init__()
-        self.scale = scale
-        self.num_buckets = num_buckets
-        self.max_distance = max_distance
-        self.relative_attention_bias = nn.Embedding(num_buckets, heads)
-
-        rows = torch.arange(max_seq_len)
-        cols = torch.arange(max_seq_len)
-        rel = cols[None, :] - rows[:, None]
-        buckets = self._relative_position_bucket(
-            rel, causal=causal,
-            num_buckets=num_buckets,
-            max_distance=max_distance,
-        )
-        self.register_buffer("_buckets", buckets, persistent=False)
-
-
-    @staticmethod
-    def _relative_position_bucket(
-            relative_position: torch.Tensor,
-            causal: bool = True,
-            num_buckets: int = 32,
-            max_distance: int = 128,
-    ) -> torch.Tensor:
-        n = -relative_position
-        if causal:
-            n = torch.clamp(n, min=0)
-        else:
-            num_buckets //= 2
-            sign = (n < 0).long()
-            n = torch.abs(n)
-
-        max_exact = num_buckets // 2
-        is_small = n < max_exact
-        n_clip = torch.clamp(n, min=1)
-        val_large = max_exact + (
-                torch.log(n_clip.float() / max_exact)
-                / math.log(max_distance / max_exact)
-                * (num_buckets - max_exact)
-        ).long()
-        val_large = torch.clamp(val_large, max=num_buckets - 1)
-        bucket = torch.where(is_small, n, val_large)
-        if not causal:
-            bucket = bucket + sign * num_buckets
-        return bucket
-
-    def get_bias(self, q_len: int, k_len: int) -> torch.Tensor:
-        buckets = self._buckets[k_len - q_len: k_len, :k_len]
-        values = self.relative_attention_bias(buckets)
-        return values.permute(2, 0, 1) * self.scale
-
-    def forward(self, qk_dots: torch.Tensor) -> torch.Tensor:
-        i, j = qk_dots.shape[-2:]
-        bias = self.get_bias(i, j)
-        return qk_dots + bias
-
-
-class SelfAttention(nn.Module):
-    def __init__(
-            self,
-            *,
-            dim: int,
-            heads: int = 12,
-            dim_head: int = 64,
-            causal: bool = False,
-            dropout: float = 0.,
-            max_seq_len: int = 1024,
-    ):
-        super().__init__()
-        inner = heads * dim_head
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-        self.causal = causal
-        self._dropout_p = dropout
-
-        self.to_qkv = nn.Linear(dim, inner * 3, bias=False)
-        self.to_out = nn.Linear(inner, dim)
+        self.w_gate = nn.Linear(dim, inner_dim, bias=False)
+        self.w_up = nn.Linear(dim, inner_dim, bias=False)
+        self.w_down = nn.Linear(inner_dim, dim, bias=False)
         self.dropout = nn.Dropout(dropout)
 
-        self.rel_pos = RelativePositionBias(
-            scale=self.scale,
-            causal=causal,
-            heads=heads,
-            max_seq_len=max_seq_len,
-        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout(self.w_down(F.silu(self.w_gate(x)) * self.w_up(x)))
+
+
+class ALiBi(nn.Module):
+    def __init__(self, heads: int, max_seq_len: int = 1024):
+        super().__init__()
+        slopes = self._slopes(heads)
+        pos = torch.arange(max_seq_len, dtype=torch.float32)
+        dist = (pos[None, :] - pos[:, None]).abs()
+        bias = -dist.unsqueeze(0) * slopes[:, None, None]
+        self.register_buffer("_bias", bias, persistent=False)
+
+    @staticmethod
+    def _slopes(n: int) -> torch.Tensor:
+        def _pow2(m: int):
+            start = 2.0 ** (-(2.0 ** -(math.log2(m) - 3)))
+            return [start * (start ** i) for i in range(m)]
+
+        if math.log2(n).is_integer():
+            return torch.tensor(_pow2(n), dtype=torch.float32)
+
+        n_floor = 2 ** math.floor(math.log2(n))
+        extra = _pow2(n_floor * 2)[::2][: n - n_floor]
+        return torch.tensor(_pow2(n_floor) + extra, dtype=torch.float32)
+
+    def get_bias(self, q_len: int, k_len: int) -> torch.Tensor:
+        return self._bias[:, k_len - q_len : k_len, :k_len]
+
+class MultiQuerySelfAttention(nn.Module):
+    def __init__(
+        self,
+        *,
+        dim: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        causal: bool = False,
+        dropout: float = 0.0,
+        max_seq_len: int = 1024,
+    ):
+        super().__init__()
+        self.heads = heads
+        self.causal = causal
+        self._drop_p = dropout
+        inner = heads * dim_head
+
+        self.to_q = nn.Linear(dim, inner, bias=False)
+        self.to_k = nn.Linear(dim, dim_head, bias=False)
+        self.to_v = nn.Linear(dim, dim_head, bias=False)
+        self.to_out = nn.Linear(inner, dim, bias=False)
+        self.alibi = ALiBi(heads=heads, max_seq_len=max_seq_len)
 
         if causal:
-            mask = torch.ones(max_seq_len, max_seq_len, dtype=torch.bool).triu(1)
-            self.register_buffer("causal_mask", mask, persistent=False)
+            cm = torch.ones(max_seq_len, max_seq_len, dtype=torch.bool).triu(1)
+            self.register_buffer("causal_mask", cm, persistent=False)
 
     def forward(
-            self,
-            x: torch.Tensor,
-            mask: Optional[torch.Tensor] = None,
+        self,
+        x: torch.Tensor,
+        mask = None,
     ) -> torch.Tensor:
         b, n, _ = x.shape
         h = self.heads
 
-        q, k, v = self.to_qkv(x).chunk(3, dim=-1)
-        q = q.view(b, n, h, -1).transpose(1, 2)
-        k = k.view(b, n, h, -1).transpose(1, 2)
-        v = v.view(b, n, h, -1).transpose(1, 2)
+        q = self.to_q(x).view(b, n, h, -1).transpose(1, 2)
+        k = self.to_k(x).unsqueeze(1).expand(b, h, n, -1)
+        v = self.to_v(x).unsqueeze(1).expand(b, h, n, -1)
 
-        attn_bias = self.rel_pos.get_bias(n, n).unsqueeze(0)
+        attn_bias = self.alibi.get_bias(n, n).unsqueeze(0)
         neg_inf = torch.finfo(q.dtype).min
+
+        if self.causal:
+            attn_bias = attn_bias.masked_fill(self.causal_mask[:n, :n], neg_inf)
 
         if mask is not None:
             attn_bias = attn_bias.expand(b, -1, -1, -1).clone()
-            attn_bias = attn_bias.masked_fill(~mask, neg_inf)
+            attn_bias = attn_bias.masked_fill(~mask[:, None, None, :], neg_inf)
 
-        if self.causal:
-            causal_m = self.causal_mask[:n, :n]
-            attn_bias = attn_bias.masked_fill(causal_m, neg_inf)
-
-        drop_p = self._dropout_p if self.training else 0.0
-        out = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attn_bias,
-            dropout_p=drop_p,
-            scale=self.scale,
-        )
-        out = out.transpose(1, 2).contiguous().view(b, n, -1)
-        return self.to_out(out)
+        drop_p = self._drop_p if self.training else 0.0
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_bias, dropout_p=drop_p)
+        return self.to_out(out.transpose(1, 2).contiguous().view(b, n, -1))
 
 
-class CrossAttention(nn.Module):
+class MultiQueryCrossAttention(nn.Module):
     def __init__(
-            self,
-            *,
-            dim: int,
-            context_dim: Optional[int] = None,
-            heads: int = 12,
-            dim_head: int = 64,
-            dropout: float = 0.,
+        self,
+        *,
+        dim: int,
+        context_dim = None,
+        heads: int = 8,
+        dim_head: int = 64,
+        dropout: float = 0.0,
     ):
         super().__init__()
         inner_dim = dim_head * heads
-        context_dim = context_dim if context_dim is not None else dim
+        context_dim = context_dim or dim
         self.heads = heads
-        self.scale = dim_head ** -0.5
-        self._dropout_p = dropout
+        self._drop_p = dropout
 
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
-        self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
-        self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
-        self.to_out = nn.Linear(inner_dim, dim)
-        self.dropout = nn.Dropout(dropout)
+        self.to_k = nn.Linear(context_dim, dim_head, bias=False)
+        self.to_v = nn.Linear(context_dim, dim_head, bias=False)
+        self.to_out = nn.Linear(inner_dim, dim, bias=False)
 
     def forward(
-            self,
-            x: torch.Tensor,
-            context: torch.Tensor,
-            mask: Optional[torch.Tensor] = None,
-            context_mask: Optional[torch.Tensor] = None,
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        mask = None,
+        context_mask = None,
     ) -> torch.Tensor:
         b, n, _ = x.shape
         h = self.heads
-        kv_input = context if context is not None else x
-        m = kv_input.shape[1]
+        m = context.shape[1]
 
         q = self.to_q(x).view(b, n, h, -1).transpose(1, 2)
-        k = self.to_k(kv_input).view(b, m, h, -1).transpose(1, 2)
-        v = self.to_v(kv_input).view(b, m, h, -1).transpose(1, 2)
+        k = self.to_k(context).unsqueeze(1).expand(b, h, m, -1)
+        v = self.to_v(context).unsqueeze(1).expand(b, h, m, -1)
 
-        attn_bias: Optional[torch.Tensor] = None
-        neg_inf = torch.finfo(q.dtype).min
-
+        attn_bias = None
         if mask is not None or context_mask is not None:
+            neg_inf = torch.finfo(q.dtype).min
             attn_bias = torch.zeros(b, h, n, m, device=x.device, dtype=q.dtype)
             if mask is not None:
-                attn_bias = attn_bias.masked_fill(~mask, neg_inf)
+                attn_bias = attn_bias.masked_fill(~mask[:, None, :, None], neg_inf)
             if context_mask is not None:
-                cm = context_mask[:, None, None, :]
-                attn_bias = attn_bias.masked_fill(~cm, neg_inf)
+                attn_bias = attn_bias.masked_fill(~context_mask[:, None, None, :], neg_inf)
 
-        drop_p = self._dropout_p if self.training else 0.0
-        out = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attn_bias,
-            dropout_p=drop_p,
-            scale=self.scale,
-        )
-
-        out = out.transpose(1, 2).contiguous().view(b, n, -1)
-        return self.to_out(out)
+        drop_p = self._drop_p if self.training else 0.0
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_bias, dropout_p=drop_p)
+        return self.to_out(out.transpose(1, 2).contiguous().view(b, n, -1))
 
 
 class Encoder(nn.Module):
     def __init__(
-            self,
-            *,
-            dim: int,
-            num_tokens: int,
-            depth: int,
-            heads: int = 12,
-            dim_head: int = 64,
-            causal: bool = False,
-            mlp_mult: int = 4,
-            dropout: float = 0.,
+        self,
+        *,
+        dim: int,
+        num_tokens: int,
+        depth: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        mlp_mult: int = 4,
+        dropout: float = 0.0,
+        max_seq_len: int = 1024,
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
-        self.layer = nn.ModuleList([
+        self.layers = nn.ModuleList([
             nn.ModuleList([
-                Residual(PreNorm(dim, SelfAttention(
+                Residual(PreNorm(dim, MultiQuerySelfAttention(
                     dim=dim, heads=heads, dim_head=dim_head,
-                    causal=causal, dropout=dropout,
+                    causal=False, dropout=dropout, max_seq_len=max_seq_len,
                 ))),
-                Residual(PreNorm(dim, FeedForward(
-                    dim=dim, mult=mlp_mult, dropout=dropout,
-                ))),
+                Residual(PreNorm(dim, FeedForward(dim=dim, mult=mlp_mult, dropout=dropout))),
             ])
             for _ in range(depth)
         ])
-        self.final_norm = LayerNorm(dim)
+        self.norm = RMSNorm(dim)
 
     def forward(
-            self,
-            x: torch.Tensor,
-            mask: Optional[torch.Tensor] = None,
+        self,
+        x: torch.Tensor,
+        mask = None,
     ) -> torch.Tensor:
         x = self.token_emb(x)
-        for attn, mlp in self.layer:
+        for attn, ff in self.layers:
             x = attn(x, mask=mask)
-            x = mlp(x)
-        return self.final_norm(x)
+            x = ff(x)
+        return self.norm(x)
 
 
 class Decoder(nn.Module):
     def __init__(
-            self,
-            *,
-            dim: int,
-            num_tokens: int,
-            depth: int,
-            heads: int = 12,
-            dim_head: int = 64,
-            causal: bool = True,
-            mlp_mult: int = 4,
-            dropout: float = 0.,
+        self,
+        *,
+        dim: int,
+        num_tokens: int,
+        depth: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        mlp_mult: int = 4,
+        dropout: float = 0.0,
+        max_seq_len: int = 1024,
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
-        self.layer = nn.ModuleList([
+        self.layers = nn.ModuleList([
             nn.ModuleList([
-                Residual(PreNorm(dim, SelfAttention(
+                Residual(PreNorm(dim, MultiQuerySelfAttention(
                     dim=dim, heads=heads, dim_head=dim_head,
-                    causal=causal, dropout=dropout,
+                    causal=True, dropout=dropout, max_seq_len=max_seq_len,
                 ))),
-                Residual(PreNorm(dim, CrossAttention(
+                Residual(PreNorm(dim, MultiQueryCrossAttention(
                     dim=dim, heads=heads, dim_head=dim_head, dropout=dropout,
                 ))),
-                Residual(PreNorm(dim, FeedForward(
-                    dim=dim, mult=mlp_mult, dropout=dropout,
-                ))),
+                Residual(PreNorm(dim, FeedForward(dim=dim, mult=mlp_mult, dropout=dropout))),
             ])
             for _ in range(depth)
         ])
-        self.final_norm = LayerNorm(dim)
+        self.norm = RMSNorm(dim)
 
     def forward(
-            self,
-            x: torch.Tensor,
-            context: torch.Tensor,
-            mask: Optional[torch.Tensor] = None,
-            context_mask: Optional[torch.Tensor] = None,
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        mask = None,
+        context_mask = None,
     ) -> torch.Tensor:
         x = self.token_emb(x)
-        for attn, cross_attn, mlp in self.layer:
+        for attn, cross_attn, ff in self.layers:
             x = attn(x, mask=mask)
             x = cross_attn(x, context=context, mask=mask, context_mask=context_mask)
-            x = mlp(x)
-        return self.final_norm(x)
+            x = ff(x)
+        return self.norm(x)
 
 
 class Transformer(nn.Module):
     def __init__(
-            self,
-            *,
-            dim: int,
-            enc_num_tokens: int,
-            enc_depth: int,
-            enc_heads: int,
-            enc_dim_head: int,
-            enc_mlp_mult: int,
-            dec_num_tokens: int,
-            dec_depth: int,
-            dec_heads: int,
-            dec_dim_head: int,
-            dec_mlp_mult: int,
-            dropout: float = 0.,
-            tie_token_emb: bool = True,
+        self,
+        *,
+        dim: int,
+        enc_num_tokens: int,
+        enc_depth: int,
+        enc_heads: int,
+        enc_dim_head: int,
+        enc_mlp_mult: int,
+        dec_num_tokens: int,
+        dec_depth: int,
+        dec_heads: int,
+        dec_dim_head: int,
+        dec_mlp_mult: int,
+        dropout: float = 0.0,
+        max_seq_len: int = 1024,
+        tie_token_emb: bool = True,
     ):
         super().__init__()
         self.encoder = Encoder(
             dim=dim, num_tokens=enc_num_tokens, depth=enc_depth,
             heads=enc_heads, dim_head=enc_dim_head, mlp_mult=enc_mlp_mult,
-            dropout=dropout,
+            dropout=dropout, max_seq_len=max_seq_len,
         )
         self.decoder = Decoder(
             dim=dim, num_tokens=dec_num_tokens, depth=dec_depth,
             heads=dec_heads, dim_head=dec_dim_head, mlp_mult=dec_mlp_mult,
-            dropout=dropout,
+            dropout=dropout, max_seq_len=max_seq_len,
         )
-        self.to_logits = nn.Linear(dim, dec_num_tokens)
+        self.to_logits = nn.Linear(dim, dec_num_tokens, bias=False)
+        self.to_logits.weight = self.decoder.token_emb.weight
 
         if tie_token_emb:
+            if enc_num_tokens != dec_num_tokens:
+                raise ValueError(
+                    f"tie_token_emb=True требует enc_num_tokens == dec_num_tokens, "
+                    f"получено {enc_num_tokens} и {dec_num_tokens}"
+                )
             self.encoder.token_emb.weight = self.decoder.token_emb.weight
-            self.to_logits.weight = self.decoder.token_emb.weight
 
     def forward(
-            self,
-            src: torch.Tensor,
-            tgt: torch.Tensor,
-            mask: Optional[torch.Tensor] = None,
-            context_mask: Optional[torch.Tensor] = None,
+        self,
+        src: torch.Tensor,
+        tgt: torch.Tensor,
+        src_mask = None,
+        tgt_mask = None,
     ) -> torch.Tensor:
-        x = self.encoder(src, mask=mask)
-        x = self.decoder(tgt, x, mask=mask, context_mask=context_mask)
+        context = self.encoder(src, mask=src_mask)
+        x = self.decoder(tgt, context, mask=tgt_mask, context_mask=src_mask)
         return self.to_logits(x)
 
 
 if __name__ == "__main__":
+    model = Transformer(
+        dim=256,
+        enc_num_tokens=8000,
+        enc_depth=4,
+        enc_heads=8,
+        enc_dim_head=32,
+        enc_mlp_mult=4,
+        dec_num_tokens=8000,
+        dec_depth=4,
+        dec_heads=8,
+        dec_dim_head=32,
+        dec_mlp_mult=4,
+        dropout=0.1,
+        max_seq_len=512,
+    )
+
+    src = torch.randint(0, 8000, (2, 64))
+    tgt = torch.randint(0, 8000, (2, 48))
+    src_mask = torch.ones(2, 64, dtype=torch.bool)
+    tgt_mask = torch.ones(2, 48, dtype=torch.bool)
+
+    logits = model(src, tgt, src_mask=src_mask, tgt_mask=tgt_mask)
+    print(f"logits shape: {logits.shape}")
+
+    total = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total:,}")
     print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")

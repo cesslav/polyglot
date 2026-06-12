@@ -45,32 +45,26 @@ def load_model(checkpoint_path, device):
 
 def beam_search(model, tokenizer, src, beam_size, max_len, device):
     bos, eos = 0, 1
-
     with torch.no_grad():
         memory = model.encoder(src)
         beams = [(torch.tensor([[bos]], device=device), 0.0)]
 
         for _ in range(max_len):
             new_beams = []
-
             for seq, score in beams:
                 if seq[0, -1].item() == eos:
                     new_beams.append((seq, score))
                     continue
-
                 logits = model.to_logits(model.decoder(seq, memory))
                 log_probs = torch.log_softmax(logits[:, -1, :], dim=-1)
-                topk_log_probs, topk_tokens = torch.topk(log_probs, beam_size, dim=-1)
-
+                topk_lp, topk_t = torch.topk(log_probs, beam_size, dim=-1)
                 for k in range(beam_size):
-                    next_token = topk_tokens[0, k].unsqueeze(0).unsqueeze(0)
+                    next_tok = topk_t[0, k].unsqueeze(0).unsqueeze(0)
                     new_beams.append((
-                        torch.cat([seq, next_token], dim=1),
-                        score + topk_log_probs[0, k].item(),
+                        torch.cat([seq, next_tok], dim=1),
+                        score + topk_lp[0, k].item(),
                     ))
-
             beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
-
             if all(seq[0, -1].item() == eos for seq, _ in beams):
                 break
 
@@ -80,7 +74,6 @@ def beam_search(model, tokenizer, src, beam_size, max_len, device):
 def evaluate(model, tokenizer, src_sentences, ref_sentences, beam_size, max_len, device):
     hypotheses = []
     references = [ref_sentences]
-
     t_start = time.perf_counter()
     total_chars = 0
 
@@ -134,16 +127,13 @@ if __name__ == "__main__":
         )
 
         n = len(src_sentences)
-        tok_per_s = (n * BEAM_SIZE) / elapsed if elapsed > 0 else 0
-        chr_per_s = total_chars / elapsed if elapsed > 0 else 0
-
         print(f"\n{'─' * 52}")
         print(f"  Сплит:           FLORES+ {split}")
         print(f"  Предложений:     {n}")
         print(f"  BLEU:            {bleu_result.score:.2f}")
         print(f"  {bleu_result}")
         print(f"  Время:           {elapsed:.1f} с")
-        print(f"  Скорость:        {n / elapsed:.1f} пр/с | {chr_per_s:.0f} chr/s")
+        print(f"  Скорость:        {n / elapsed:.1f} пр/с | {total_chars / elapsed:.0f} chr/s")
         print(f"{'=' * 52}\n")
 
         log_path = f"bleu_{split}.txt"
@@ -155,7 +145,7 @@ if __name__ == "__main__":
             f.write(f"BLEU:       {bleu_result.score:.2f}\n")
             f.write(f"{bleu_result}\n")
             f.write(f"Time:       {elapsed:.1f} s\n")
-            f.write(f"Speed:      {n / elapsed:.1f} sent/s | {chr_per_s:.0f} chr/s\n")
+            f.write(f"Speed:      {n / elapsed:.1f} sent/s | {total_chars / elapsed:.0f} chr/s\n")
             f.write("\n--- Примеры переводов ---\n\n")
             for i in range(min(20, n)):
                 f.write(f"[{i+1}] SRC: {src_sentences[i]}\n")

@@ -1,5 +1,6 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import sys
+import json
 import time
 from datetime import datetime, timedelta
 import torch
@@ -19,19 +20,16 @@ def get_transformer_scheduler(optimizer, warmup_steps):
         step = max(step, 1)
         if step < warmup_steps:
             return step / warmup_steps
-
         return (warmup_steps ** 0.65) / (step ** 0.65)
-
     return LambdaLR(optimizer, lr_lambda)
 
 
 def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
-    encoder_layers = len(model.encoder.layer)
-    decoder_layers = len(model.decoder.layer)
+    encoder_layers = len(model.encoder.layers)
+    decoder_layers = len(model.decoder.layers)
     max_depth = encoder_layers + decoder_layers + 1
 
     no_decay = {"bias", "gamma", "beta"}
-
     layer_map = {}
     used = set()
 
@@ -44,11 +42,11 @@ def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
 
         if "token_emb" in name:
             depth = 0
-        elif "encoder.layer" in name:
-            idx = int(name.split("encoder.layer.")[1].split(".")[0])
+        elif "encoder.layers" in name:
+            idx = int(name.split("encoder.layers.")[1].split(".")[0])
             depth = idx + 1
-        elif "decoder.layer" in name:
-            idx = int(name.split("decoder.layer.")[1].split(".")[0])
+        elif "decoder.layers" in name:
+            idx = int(name.split("decoder.layers.")[1].split(".")[0])
             depth = encoder_layers + idx + 1
         else:
             depth = max_depth
@@ -56,27 +54,16 @@ def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
         if depth not in layer_map:
             layer_map[depth] = {"decay": [], "no_decay": []}
 
-        is_no_decay = any(nd in name for nd in no_decay)
-        bucket = "no_decay" if is_no_decay else "decay"
+        bucket = "no_decay" if any(nd in name for nd in no_decay) else "decay"
         layer_map[depth][bucket].append(param)
 
     param_groups = []
     for depth, buckets in layer_map.items():
         lr = base_lr * (decay ** (max_depth - depth))
-
         if buckets["decay"]:
-            param_groups.append({
-                "params": buckets["decay"],
-                "lr": lr,
-                "weight_decay": weight_decay
-            })
-
+            param_groups.append({"params": buckets["decay"], "lr": lr, "weight_decay": weight_decay})
         if buckets["no_decay"]:
-            param_groups.append({
-                "params": buckets["no_decay"],
-                "lr": lr,
-                "weight_decay": 0.0
-            })
+            param_groups.append({"params": buckets["no_decay"], "lr": lr, "weight_decay": 0.0})
 
     return param_groups
 
@@ -86,14 +73,8 @@ def init_weights(m):
         torch.nn.init.xavier_uniform_(m.weight)
         if m.bias is not None:
             m.bias.data.fill_(0.01)
-
     elif isinstance(m, nn.Embedding):
         nn.init.normal_(m.weight, mean=0.0, std=0.02)
-
-    elif isinstance(m, nn.LayerNorm):
-        nn.init.constant_(m.bias, 0)
-        if m.bias is not None:
-            nn.init.constant_(m.weight, 1.0)
 
 
 def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN", progress=0):
@@ -110,7 +91,6 @@ def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN",
         'time': datetime.now(),
         'config': config
     }
-
     torch.save(checkpoint, os.path.join(checkpoint_dir, f"transformer_epoch_{epoch}.pt"))
     cold_save_counter += 1
     if cold_save_counter % 5 == 0:
@@ -176,21 +156,16 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
             last_thousand_loss.append(accum_loss)
             last_thousand_sum += accum_loss
 
-
             lrs = [group["lr"] for group in optimizer.param_groups]
-
             min_lr = min(lrs)
             max_lr = max(lrs)
             avg_lr = sum(lrs) / len(lrs)
 
             with torch.no_grad():
-                total_param_norm = 0.0
-
-                for p in model.parameters():
-                    if p.requires_grad:
-                        total_param_norm += p.norm().item() ** 2
-
-                total_param_norm = total_param_norm ** 0.5
+                total_param_norm = sum(
+                    p.norm().item() ** 2
+                    for p in model.parameters() if p.requires_grad
+                ) ** 0.5
 
             update_ratio = total_norm / total_param_norm
 
@@ -273,6 +248,9 @@ if __name__ == "__main__":
             print(f"Чекпоинт: {ckpt_path}")
 
     if not is_continue:
+        for key in config:
+            if key in train_config:
+                config[key] = train_config[key]
         if config["num_heads"] == 0:
             config["num_heads"] = config["d_model"] // config["dim_head"]
 
@@ -292,8 +270,10 @@ if __name__ == "__main__":
             tie_token_emb=True,
         ).to(device)
 
-        param_groups = get_transformer_lrd(transformer, base_lr=train_config["init_lr"],
-                                           decay=train_config["lr_decay"], weight_decay=0.01)
+        param_groups = get_transformer_lrd(
+            transformer, base_lr=train_config["init_lr"],
+            decay=train_config["lr_decay"], weight_decay=0.01
+        )
         optimizer = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-9, fused=True)
         scheduler = get_transformer_scheduler(optimizer, warmup_steps=32000)
         transformer.apply(init_weights)
@@ -302,11 +282,7 @@ if __name__ == "__main__":
         vocab_size = config["vocab_size"]
 
     else:
-        ckpt = torch.load(
-            os.path.join(checkpoint_dir, checkpoint_name),
-            weights_only=False,
-            map_location=device,
-        )
+        ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
         config = ckpt["config"]
 
         transformer = Transformer(
@@ -365,12 +341,13 @@ if __name__ == "__main__":
 
     for epoch in range(start_epoch + 1, num_epochs + 1):
         if progress < 0.9:
-            train_loss = train_epoch(transformer, train_loader, optimizer, scheduler, criterion, device, epoch,
-                                     accumulation_steps=192 // batch_size)
+            train_loss = train_epoch(
+                transformer, train_loader, optimizer, scheduler, criterion, device, epoch,
+                accumulation_steps=192 // batch_size
+            )
         progress = 0
         val_loss = evaluate(transformer, val_loader, criterion, device)
 
         print(f"Epoch [{epoch}/{num_epochs}] | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         print(torch.cuda.memory_allocated() / 1024 ** 3)
-
         save(transformer, epoch, optimizer, scheduler, train_loss, val_loss)

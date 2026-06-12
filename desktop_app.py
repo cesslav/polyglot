@@ -1,3 +1,4 @@
+# This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import os
 import sys
 import json
@@ -42,95 +43,35 @@ CONTENT_MAX_WIDTH = 900
 CONTENT_MAX_HEIGHT = 1000
 
 DEFAULT_SERVER_URL = "http://igorpet.ru:9100"
-MODELS_DIR = "./.models/"
-MODELS_DIR = Path(MODELS_DIR)
+MODELS_DIR = Path("./.models/")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 GLOBAL_STYLE = f"""
-QWidget {{
-    background-color: {COLOR_BG};
-    color: {COLOR_TEXT};
-    font-family: "Consolas", "Courier New", monospace;
-    font-size: 14px;
-}}
-QScrollBar:vertical {{
-    background: {COLOR_BG};
-    width: 8px;
-    border: none;
-}}
-QScrollBar::handle:vertical {{
-    background: {COLOR_BORDER};
-    border-radius: 4px;
-    min-height: 20px;
-}}
+QWidget {{ background-color: {COLOR_BG}; color: {COLOR_TEXT}; font-family: "Consolas", "Courier New", monospace; font-size: 14px; }}
+QScrollBar:vertical {{ background: {COLOR_BG}; width: 8px; border: none; }}
+QScrollBar::handle:vertical {{ background: {COLOR_BORDER}; border-radius: 4px; min-height: 20px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-QScrollBar:horizontal {{
-    background: {COLOR_BG};
-    height: 8px;
-    border: none;
-}}
-QScrollBar::handle:horizontal {{
-    background: {COLOR_BORDER};
-    border-radius: 4px;
-}}
+QScrollBar:horizontal {{ background: {COLOR_BG}; height: 8px; border: none; }}
+QScrollBar::handle:horizontal {{ background: {COLOR_BORDER}; border-radius: 4px; }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
-QComboBox {{
-    background-color: {COLOR_SURFACE};
-    color: {COLOR_TEXT};
-    border: 1.5px solid {COLOR_BORDER};
-    border-radius: 8px;
-    padding: 6px 12px;
-    min-height: 32px;
-}}
+QComboBox {{ background-color: {COLOR_SURFACE}; color: {COLOR_TEXT}; border: 1.5px solid {COLOR_BORDER}; border-radius: 8px; padding: 6px 12px; min-height: 32px; }}
 QComboBox:hover {{ border-color: {COLOR_ACCENT}; }}
 QComboBox::drop-down {{ border: none; width: 24px; }}
-QComboBox::down-arrow {{
-    image: none;
-    width: 0; height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid {COLOR_ACCENT};
-}}
-QComboBox QAbstractItemView {{
-    background-color: {COLOR_SURFACE};
-    color: {COLOR_TEXT};
-    border: 1.5px solid {COLOR_BORDER};
-    selection-background-color: {COLOR_ACCENT_DIM};
-    selection-color: {COLOR_TEXT};
-    outline: none;
-}}
-QProgressBar {{
-    background-color: #333333;
-    border: none;
-    border-radius: 3px;
-    height: 6px;
-    text-align: center;
-}}
-QProgressBar::chunk {{
-    background-color: {COLOR_ACCENT};
-    border-radius: 3px;
-}}
+QComboBox::down-arrow {{ image: none; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid {COLOR_ACCENT}; }}
+QComboBox QAbstractItemView {{ background-color: {COLOR_SURFACE}; color: {COLOR_TEXT}; border: 1.5px solid {COLOR_BORDER}; selection-background-color: {COLOR_ACCENT_DIM}; selection-color: {COLOR_TEXT}; outline: none; }}
+QProgressBar {{ background-color: #333333; border: none; border-radius: 3px; height: 6px; text-align: center; }}
+QProgressBar::chunk {{ background-color: {COLOR_ACCENT}; border-radius: 3px; }}
 """
 
 
 def accent_btn(text, small=False):
     btn = QPushButton(text)
-    h = "36px" if small else "44px"
-    fs = "12px" if small else "14px"
+    h, fs = ("36px", "12px") if small else ("44px", "14px")
     btn.setStyleSheet(f"""
-        QPushButton {{
-            background-color: {COLOR_ACCENT};
-            color: #000000;
-            border: none;
-            border-radius: 8px;
-            padding: 0 20px;
-            min-height: {h};
-            font-weight: bold;
-            font-size: {fs};
-        }}
+        QPushButton {{ background-color: {COLOR_ACCENT}; color: #000000; border: none; border-radius: 8px; padding: 0 20px; min-height: {h}; font-weight: bold; font-size: {fs}; }}
         QPushButton:hover {{ background-color: #6ed45a; }}
         QPushButton:pressed {{ background-color: #4aa03a; }}
         QPushButton:disabled {{ background-color: #2a4a24; color: #555555; }}
@@ -142,16 +83,7 @@ def outline_btn(text, color=COLOR_ACCENT, small=False):
     btn = QPushButton(text)
     h = "36px" if small else "44px"
     btn.setStyleSheet(f"""
-        QPushButton {{
-            background-color: transparent;
-            color: {color};
-            border: 1.5px solid {color};
-            border-radius: 8px;
-            padding: 0 16px;
-            min-height: {h};
-            font-weight: bold;
-            font-size: 13px;
-        }}
+        QPushButton {{ background-color: transparent; color: {color}; border: 1.5px solid {color}; border-radius: 8px; padding: 0 16px; min-height: {h}; font-weight: bold; font-size: 13px; }}
         QPushButton:hover {{ background-color: rgba(92,184,75,0.12); }}
         QPushButton:pressed {{ background-color: rgba(92,184,75,0.2); }}
         QPushButton:disabled {{ color: #555555; border-color: #555555; }}
@@ -162,16 +94,7 @@ def outline_btn(text, color=COLOR_ACCENT, small=False):
 def delete_btn(text):
     btn = QPushButton(text)
     btn.setStyleSheet(f"""
-        QPushButton {{
-            background-color: #8B0000;
-            color: #ffffff;
-            border: none;
-            border-radius: 8px;
-            padding: 0 14px;
-            min-height: 32px;
-            font-weight: bold;
-            font-size: 13px;
-        }}
+        QPushButton {{ background-color: #8B0000; color: #ffffff; border: none; border-radius: 8px; padding: 0 14px; min-height: 32px; font-weight: bold; font-size: 13px; }}
         QPushButton:hover {{ background-color: #aa0000; }}
         QPushButton:pressed {{ background-color: #6a0000; }}
     """)
@@ -182,20 +105,8 @@ def nav_btn(text):
     btn = QPushButton(text)
     btn.setCheckable(True)
     btn.setStyleSheet(f"""
-        QPushButton {{
-            background-color: {COLOR_BG};
-            color: {COLOR_TEXT};
-            border: 1px solid {COLOR_BORDER};
-            border-radius: 0;
-            padding: 0;
-            min-height: 48px;
-            font-size: 12px;
-            font-weight: bold;
-        }}
-        QPushButton:checked {{
-            background-color: {COLOR_SECONDARY};
-            color: {COLOR_ACCENT};
-        }}
+        QPushButton {{ background-color: {COLOR_BG}; color: {COLOR_TEXT}; border: 1px solid {COLOR_BORDER}; border-radius: 0; padding: 0; min-height: 48px; font-size: 12px; font-weight: bold; }}
+        QPushButton:checked {{ background-color: {COLOR_SECONDARY}; color: {COLOR_ACCENT}; }}
         QPushButton:hover:!checked {{ background-color: #111111; }}
     """)
     return btn
@@ -203,25 +114,12 @@ def nav_btn(text):
 
 def neon_card():
     frame = QFrame()
-    frame.setStyleSheet(f"""
-        QFrame {{
-            background-color: {COLOR_SURFACE};
-            border: 1.5px solid {COLOR_BORDER};
-            border-radius: 10px;
-        }}
-    """)
+    frame.setStyleSheet(f"QFrame {{ background-color: {COLOR_SURFACE}; border: 1.5px solid {COLOR_BORDER}; border-radius: 10px; }}")
     return frame
 
 
 class RoundedPanel(QFrame):
-
-    STYLE = f"""
-        RoundedPanel {{
-            background-color: {COLOR_SURFACE};
-            border: 1.5px solid {COLOR_BORDER};
-            border-radius: 10px;
-        }}
-    """
+    STYLE = f"RoundedPanel {{ background-color: {COLOR_SURFACE}; border: 1.5px solid {COLOR_BORDER}; border-radius: 10px; }}"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -233,23 +131,15 @@ class RoundedPanel(QFrame):
         from PyQt5.QtGui import QPainterPath, QRegion
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), 10, 10)
-        region = QRegion(path.toFillPolygon().toPolygon())
-        self.setMask(region)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
 
 def text_edit_transparent():
     te = QTextEdit()
     te.setFrameShape(QFrame.NoFrame)
     te.setStyleSheet(f"""
-        QTextEdit {{
-            background: transparent;
-            border: none;
-            border-radius: 0;
-            padding: 14px;
-            font-size: 15px;
-            color: {COLOR_TEXT};
-            selection-background-color: rgba(92,184,75,0.3);
-        }}
+        QTextEdit {{ background: transparent; border: none; border-radius: 0; padding: 14px;
+                    font-size: 15px; color: {COLOR_TEXT}; selection-background-color: rgba(92,184,75,0.3); }}
     """)
     return te
 
@@ -283,26 +173,22 @@ class UnigramTokenizer:
 
     def _viterbi(self, text: str) -> list:
         n = len(text)
-        if n == 0:
-            return []
+        if n == 0: return []
         NEG_INF = float("-inf")
         dp_score = [NEG_INF] * (n + 1)
         dp_from = [-1] * (n + 1)
         dp_score[0] = 0.0
         for end in range(1, n + 1):
             for start in range(max(0, end - self.MAX_TOKEN_LEN), end):
-                if dp_score[start] == NEG_INF:
-                    continue
+                if dp_score[start] == NEG_INF: continue
                 sub = text[start:end]
                 score = self._vocab_score.get(sub)
-                if score is None:
-                    continue
+                if score is None: continue
                 total = dp_score[start] + score
                 if total > dp_score[end]:
                     dp_score[end] = total
                     dp_from[end] = start
-        if dp_score[n] == NEG_INF:
-            return list(text)
+        if dp_score[n] == NEG_INF: return list(text)
         result, pos = [], n
         while pos > 0:
             start = dp_from[pos]
@@ -312,8 +198,7 @@ class UnigramTokenizer:
         return result
 
     def _pretokenize(self, text: str) -> list:
-        if not text:
-            return []
+        if not text: return []
         raw = "▁" + text.replace(" ", "▁")
         parts = raw.split("▁")
         return ["▁" + p for p in parts if p]
@@ -325,8 +210,7 @@ class UnigramTokenizer:
                 tokens.append(self._token_to_id.get(sub, self.unk_id))
         tokens.append(self.eos_id)
         out = np.full(max_length, self.pad_id, dtype=np.int64)
-        for i, t in enumerate(tokens[:max_length]):
-            out[i] = t
+        for i, t in enumerate(tokens[:max_length]): out[i] = t
         return out
 
     def decode(self, ids, skip_special: bool = True) -> str:
@@ -334,8 +218,7 @@ class UnigramTokenizer:
         sb = []
         for tid in ids:
             tid = int(tid)
-            if tid in skip or tid < 0 or tid >= len(self._id_to_token):
-                continue
+            if tid in skip or tid < 0 or tid >= len(self._id_to_token): continue
             sb.append(self._id_to_token[tid])
         return "".join(sb).replace("▁", " ").strip()
 
@@ -377,33 +260,40 @@ def greedy_search(model, tokenizer, src_tokens, max_len=MAX_OUTPUT_LEN, on_token
         logits = model.decode(tgt, memory)
         next_id = int(np.argmax(logits[0, -1, :]))
         tokens.append(next_id)
-        if on_token:
-            on_token(np.array(tokens, dtype=np.int64))
-        if next_id == eos:
-            break
+        if on_token: on_token(np.array(tokens, dtype=np.int64))
+        if next_id == eos: break
     return np.array(tokens, dtype=np.int64)
 
 
-def beam_search(model, tokenizer, src_tokens, beam_size=4, max_len=MAX_OUTPUT_LEN, on_token=None):
-    bos, eos = tokenizer.bos_id, tokenizer.eos_id
-    memory = model.encode(src_tokens[np.newaxis, :])
-    beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
-    for _ in range(max_len):
-        new_beams = []
-        for seq, score in beams:
-            if seq[0, -1] == eos:
-                new_beams.append((seq, score)); continue
-            logits = model.decode(seq, memory)
-            log_probs = _np_log_softmax(logits[:, -1, :])
-            topk = np.argsort(-log_probs, axis=-1)[0][:beam_size]
-            for k in topk:
-                new_beams.append((np.concatenate([seq, [[k]]], axis=1), score + float(log_probs[0, k])))
-        beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
-        if on_token:
-            on_token(beams[0][0][0])
-        if all(s[0, -1] == eos for s, _ in beams):
-            break
-    return beams[0][0][0]
+def read_model_config(model_dir: Path) -> dict:
+    config_path = model_dir / "model_config.json"
+    if config_path.exists():
+        try:
+            return json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def make_display_name(stem: str) -> str:
+    model_dir = MODELS_DIR / stem if stem else MODELS_DIR
+    cfg = read_model_config(model_dir)
+
+    src = cfg.get("input_language", "").strip().upper()
+    tgt = cfg.get("output_language", "").strip().upper()
+    bidir = cfg.get("bidirectional", False)
+    if src and tgt:
+        arrow = "<->" if bidir else "->"
+        return f"{src} {arrow} {tgt}"
+
+    parts = stem.split("-")
+    if (len(parts) >= 2 and
+            all(p.isalpha() and len(p) <= 3 for p in parts[:2])):
+        arrow = f"{parts[0].upper()} -> {parts[1].upper()}"
+        suffix = " ".join(p.capitalize() for p in parts[2:])
+        return f"{arrow} {suffix}".strip()
+    return " ".join(p.capitalize() for p in parts)
+
 
 
 class ModelDownloadManager:
@@ -437,8 +327,7 @@ class ModelDownloadManager:
                     downloaded += len(chunk)
                     if on_progress and total:
                         on_progress(int(downloaded * 100 / total), False)
-        if on_progress:
-            on_progress(100, True)
+        if on_progress: on_progress(100, True)
         stem = file.removesuffix(".zip")
         model_dir = dest_dir / stem
         model_dir.mkdir(exist_ok=True)
@@ -469,7 +358,6 @@ class InferenceWorker(QThread):
             actual = int(nz[-1]) + 1 if len(nz) else 1
             src_len = next((n for n in TOKEN_LEN_STEPS if n >= actual), TOKEN_LEN_STEPS[-1])
             src = raw[:src_len]
-
             token_count = [0]
 
             def on_tok(tokens):
@@ -509,10 +397,8 @@ class FetchListWorker(QThread):
     error = pyqtSignal(str)
 
     def run(self):
-        try:
-            self.result.emit(ModelDownloadManager.fetch_model_list())
-        except Exception as e:
-            self.error.emit(str(e))
+        try:    self.result.emit(ModelDownloadManager.fetch_model_list())
+        except Exception as e: self.error.emit(str(e))
 
 
 class PingWorker(QThread):
@@ -531,11 +417,7 @@ class ModelCard(QFrame):
     delete_clicked = pyqtSignal(dict)
 
     CARD_STYLE = f"""
-        QFrame {{
-            background-color: {COLOR_SURFACE};
-            border: 1.5px solid {COLOR_BORDER};
-            border-radius: 8px;
-        }}
+        QFrame {{ background-color: {COLOR_SURFACE}; border: 1.5px solid {COLOR_BORDER}; border-radius: 8px; }}
         QLabel {{ border: none; background: transparent; }}
     """
 
@@ -595,7 +477,6 @@ class ModelCard(QFrame):
 
         layout.addWidget(self.dl_btn)
         layout.addWidget(self.del_btn)
-
         self._refresh()
 
     def _refresh(self):
@@ -727,7 +608,6 @@ class TranslateScreen(QWidget):
         self.translate_btn.setEnabled(False)
         self.translate_btn.clicked.connect(self._do_translate)
         bottom_bar.addWidget(self.translate_btn)
-
         bottom_bar.addStretch()
 
         model_lbl = QLabel("Языковой пакет:")
@@ -740,9 +620,7 @@ class TranslateScreen(QWidget):
         bottom_bar.addWidget(self.model_combo)
 
         root.addLayout(bottom_bar)
-
         self.refresh_models()
-
 
     def refresh_models(self):
         self.model_combo.blockSignals(True)
@@ -753,7 +631,7 @@ class TranslateScreen(QWidget):
             for d in sorted(MODELS_DIR.iterdir()):
                 if d.is_dir() and self._is_model_dir(d):
                     self._model_dirs.append(d)
-                    self.model_combo.addItem(self._display(d.name))
+                    self.model_combo.addItem(make_display_name(d.name))
 
         self.model_combo.blockSignals(False)
 
@@ -761,25 +639,13 @@ class TranslateScreen(QWidget):
             self._load_model(self._model_dirs[0])
         else:
             self.translate_btn.setEnabled(False)
-            self.output_edit.setPlainText(
-                "Языковой пакет не установлен.\nПерейдите в «Загрузки»."
-            )
+            self.output_edit.setPlainText("Языковой пакет не установлен.\nПерейдите в «Загрузки».")
 
     @staticmethod
     def _is_model_dir(d: Path) -> bool:
         return ((d / "encoder.onnx").exists() and
                 (d / "decoder.onnx").exists() and
                 (d / "tokenizer" / "tokenizer.json").exists())
-
-    @staticmethod
-    def _display(stem: str) -> str:
-        parts = stem.split("-")
-        if (len(parts) >= 2 and
-                all(p.isalpha() and len(p) <= 3 for p in parts[:2])):
-            arrow = f"{parts[0].upper()} -> {parts[1].upper()}"
-            suffix = " ".join(p.capitalize() for p in parts[2:])
-            return f"{arrow} {suffix}".strip()
-        return " ".join(p.capitalize() for p in parts)
 
     def _on_model_changed(self, idx: int):
         if 0 <= idx < len(self._model_dirs):
@@ -831,10 +697,15 @@ class TranslateScreen(QWidget):
 
         self.worker = InferenceWorker(self.model, self.tokenizer, text)
         self.worker.partial_result.connect(self.output_edit.setPlainText)
-        self.status_lbl.setText("Готово!")
-        self.translate_btn.setEnabled(True)
+        self.worker.finished.connect(self._on_done)
         self.worker.error.connect(self._on_err)
         self.worker.start()
+
+    def _on_done(self, text: str, elapsed: float, tokens: int):
+        self.output_edit.setPlainText(text)
+        tok_s = tokens / elapsed if elapsed > 0 else 0
+        self.status_lbl.setText(f"{tok_s:.1f} tok/s")
+        self.translate_btn.setEnabled(True)
 
     def _on_err(self, msg: str):
         self.output_edit.setPlainText(f"⚠ Ошибка: {msg}")
@@ -843,8 +714,7 @@ class TranslateScreen(QWidget):
 
     @staticmethod
     def _copy(text: str):
-        if text:
-            QApplication.clipboard().setText(text)
+        if text: QApplication.clipboard().setText(text)
 
 
 class DownloadsScreen(QWidget):
@@ -895,11 +765,8 @@ class DownloadsScreen(QWidget):
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText(DEFAULT_SERVER_URL)
         self.url_edit.setStyleSheet(f"""
-            QLineEdit {{
-                background:{COLOR_BG}; color:{COLOR_TEXT};
-                border:1.5px solid {COLOR_BORDER}; border-radius:8px;
-                padding:6px 10px; min-height:30px;
-            }}
+            QLineEdit {{ background:{COLOR_BG}; color:{COLOR_TEXT}; border:1.5px solid {COLOR_BORDER};
+                         border-radius:8px; padding:6px 10px; min-height:30px; }}
         """)
         confirm_btn = accent_btn("✓", small=True)
         confirm_btn.setFixedWidth(60)
@@ -928,11 +795,8 @@ class DownloadsScreen(QWidget):
         installed = self._installed_stems()
         for stem in installed:
             d = MODELS_DIR / stem
-            size_mb = max(1, sum(
-                f.stat().st_size for f in d.rglob("*") if f.is_file()
-            ) // (1024 * 1024))
-            info = {"name": TranslateScreen._display(stem),
-                    "file": f"{stem}.zip", "size_mb": size_mb}
+            size_mb = max(1, sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) // (1024 * 1024))
+            info = {"name": make_display_name(stem), "file": f"{stem}.zip", "size_mb": size_mb}
             self._add_card(info, installed=True)
 
         worker = FetchListWorker()
@@ -943,8 +807,7 @@ class DownloadsScreen(QWidget):
         worker.start()
 
     def _installed_stems(self) -> list:
-        if not MODELS_DIR.exists():
-            return []
+        if not MODELS_DIR.exists(): return []
         return [d.name for d in sorted(MODELS_DIR.iterdir())
                 if d.is_dir() and (d / "encoder.onnx").exists()]
 
@@ -952,27 +815,23 @@ class DownloadsScreen(QWidget):
         self.conn_card.setVisible(False)
         installed = set(self._installed_stems())
         for m in models:
-            stem = m["file"].removesuffix(".zip")
+            stem = m["file"].removesuffix(".zip") if isinstance(m, dict) else m
+            name = m.get("name", make_display_name(stem)) if isinstance(m, dict) else make_display_name(stem)
             if stem not in installed:
-                self._add_card(m, installed=False)
+                info = {"name": name, "file": f"{stem}.zip",
+                        "size_mb": m.get("size_mb", 0) if isinstance(m, dict) else 0}
+                self._add_card(info, installed=False)
 
     def _on_server_error(self, msg: str):
         self.conn_lbl.setText("Ошибка подключения. Проверьте интернет или адрес сервера.")
-        self.conn_card.setStyleSheet(f"""
-            QFrame {{
-                background-color:#1A0A00;
-                border:1.5px solid {COLOR_ORANGE};
-                border-radius:10px;
-            }}
-        """)
+        self.conn_card.setStyleSheet(f"QFrame {{ background-color:#1A0A00; border:1.5px solid {COLOR_ORANGE}; border-radius:10px; }}")
         self.conn_lbl.setStyleSheet(f"color:{COLOR_ORANGE}; border:none;")
 
     def _clear_list(self):
         self._cards.clear()
         while self.list_layout.count() > 1:
             item = self.list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item.widget(): item.widget().deleteLater()
 
     def _add_card(self, info: dict, installed: bool):
         card = ModelCard(info, installed)
@@ -983,11 +842,8 @@ class DownloadsScreen(QWidget):
 
     def _start_download(self, info: dict):
         file = info["file"]
-        if file in self._workers:
-            return
-        card = self._cards.get(file)
-        if card:
-            card.set_progress(0, False)
+        if file in self._workers: return
+        if card := self._cards.get(file): card.set_progress(0, False)
         worker = DownloadWorker(file, MODELS_DIR)
         worker.progress.connect(self._on_progress)
         worker.finished.connect(self._on_done)
@@ -996,19 +852,16 @@ class DownloadsScreen(QWidget):
         worker.start()
 
     def _on_progress(self, file, pct, installing):
-        if card := self._cards.get(file):
-            card.set_progress(pct, installing)
+        if card := self._cards.get(file): card.set_progress(pct, installing)
 
     def _on_done(self, file: str):
         self._workers.pop(file, None)
-        if card := self._cards.get(file):
-            card.mark_installed()
+        if card := self._cards.get(file): card.mark_installed()
         self.models_changed.emit()
 
     def _on_dl_error(self, file: str, msg: str):
         self._workers.pop(file, None)
-        if card := self._cards.get(file):
-            card.mark_deleted()
+        if card := self._cards.get(file): card.mark_deleted()
         QMessageBox.warning(self, "Ошибка загрузки", f"Не удалось загрузить {file}:\n{msg}")
 
     def _delete_model(self, info: dict):
@@ -1019,18 +872,14 @@ class DownloadsScreen(QWidget):
         ) != QMessageBox.Yes:
             return
         d = MODELS_DIR / stem
-        if d.exists():
-            shutil.rmtree(d)
-        if card := self._cards.get(info["file"]):
-            card.mark_deleted()
+        if d.exists(): shutil.rmtree(d)
+        if card := self._cards.get(info["file"]): card.mark_deleted()
         self.models_changed.emit()
 
     def _on_confirm_url(self):
         raw = self.url_edit.text().strip().rstrip("/")
-        if not raw:
-            return
-        if not raw.startswith("http"):
-            raw = f"http://{raw}"
+        if not raw: return
+        if not raw.startswith("http"): raw = f"http://{raw}"
         self.conn_lbl.setText("Проверка адреса…")
         self.conn_card.setVisible(True)
         w = PingWorker(raw)
@@ -1092,7 +941,7 @@ class AboutScreen(QWidget):
         dc.addWidget(desc)
         layout.addWidget(desc_card)
 
-        def link_section(title: str, links: list):
+        def link_section(title, links):
             card = neon_card()
             cl = QVBoxLayout(card)
             cl.setContentsMargins(14, 12, 14, 12)
@@ -1122,7 +971,6 @@ class AboutScreen(QWidget):
         lic.setAlignment(Qt.AlignCenter)
         lic.setStyleSheet(f"color:{COLOR_MUTED}; font-size:12px; border:none;")
         layout.addWidget(lic)
-
         layout.addStretch()
         scroll.setWidget(container)
         root.addWidget(scroll)
@@ -1133,10 +981,7 @@ class Header(QWidget):
         super().__init__()
         self.setFixedHeight(108)
         self.setStyleSheet(f"""
-            QWidget {{
-                background-color: rgba(0,0,0,210);
-                border-bottom: 1px solid rgba(92,184,75,0.25);
-            }}
+            QWidget {{ background-color: rgba(0,0,0,210); border-bottom: 1px solid rgba(92,184,75,0.25); }}
         """)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(18, 6, 18, 6)
@@ -1151,10 +996,8 @@ class Header(QWidget):
         else:
             logo_lbl = QLabel("Полиглот")
             logo_lbl.setStyleSheet(
-                f"font-size:26px; font-weight:bold; color:{COLOR_ACCENT};"
-                "border:none; background:transparent;"
+                f"font-size:26px; font-weight:bold; color:{COLOR_ACCENT}; border:none; background:transparent;"
             )
-
         layout.addWidget(logo_lbl)
         layout.addStretch()
 
@@ -1236,11 +1079,11 @@ def main():
     app.setStyleSheet(GLOBAL_STYLE)
 
     palette = QPalette()
-    palette.setColor(QPalette.Window,     QColor(COLOR_BG))
+    palette.setColor(QPalette.Window, QColor(COLOR_BG))
     palette.setColor(QPalette.WindowText, QColor(COLOR_TEXT))
-    palette.setColor(QPalette.Base,       QColor(COLOR_SURFACE))
-    palette.setColor(QPalette.Text,       QColor(COLOR_TEXT))
-    palette.setColor(QPalette.Button,     QColor(COLOR_SURFACE))
+    palette.setColor(QPalette.Base, QColor(COLOR_SURFACE))
+    palette.setColor(QPalette.Text, QColor(COLOR_TEXT))
+    palette.setColor(QPalette.Button, QColor(COLOR_SURFACE))
     palette.setColor(QPalette.ButtonText, QColor(COLOR_TEXT))
     palette.setColor(QPalette.Highlight, QColor(COLOR_ACCENT))
     palette.setColor(QPalette.HighlightedText, QColor("#000000"))

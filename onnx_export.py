@@ -1,4 +1,5 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
+import json
 import torch
 import os
 import onnx
@@ -6,12 +7,18 @@ from imp import Transformer
 from onnxruntime.quantization import quantize_dynamic, QuantType
 
 
+SRC_LANG = "RU"
+TGT_LANG = "EN"
+BIDIRECTIONAL = True
+MODEL_VERSION = "0.1"
+ARCH_VERSION = "v9"
+_ATTN_KEYWORDS = frozenset({"to_q", "to_k", "to_v", "to_out", "to_qkv", "to_logits", "token_emb"})
+
+
 def export_fp32(model, config, save_dir):
     os.makedirs(save_dir, exist_ok=True)
-
     model.eval()
-    device = "cpu"
-    model = model.to(device)
+    model = model.to("cpu")
 
     dummy_src = torch.randint(0, config["vocab_size"], (2, 16))
 
@@ -36,14 +43,9 @@ def export_fp32(model, config, save_dir):
             self.head = model.to_logits
 
         def forward(self, tgt, memory):
-            x = self.decoder(
-                tgt,
-                memory
-            )
-            return self.head(x)
+            return self.head(self.decoder(tgt, memory))
 
     decoder = DecoderWrapper(model)
-
     dummy_tgt = torch.randint(0, config["vocab_size"], (2, 8))
     dummy_memory = torch.randn(2, 16, config["d_model"])
 
@@ -61,42 +63,52 @@ def export_fp32(model, config, save_dir):
         opset_version=17,
         dynamo=False
     )
-
     print("FP32 export done")
 
 
 def get_ff_matmul_nodes(onnx_path):
     model = onnx.load(onnx_path)
-
     ff_nodes = []
-
     for node in model.graph.node:
-        if node.op_type == "MatMul":
-            name = node.name.lower()
-
-            if "to_qkv" in name:
-                continue
-            if "to_out" in name:
-                continue
-
-            ff_nodes.append(node.name)
-
+        if node.op_type != "MatMul":
+            continue
+        name = node.name.lower()
+        if any(kw in name for kw in _ATTN_KEYWORDS):
+            continue
+        ff_nodes.append(node.name)
     return ff_nodes
 
 
 def quantize_onnx(input_path, output_path):
     nodes = get_ff_matmul_nodes(input_path)
-
-    print(f"Quantizing nodes")
-
+    print(f"Quantizing {len(nodes)} FeedForward MatMul nodes in {input_path}")
     quantize_dynamic(
         model_input=input_path,
         model_output=output_path,
-        weight_type=QuantType.QFLOAT8E4M3FN,
+        weight_type=QuantType.QInt8,
         nodes_to_quantize=nodes
     )
+    print(f"Quantized model saved: {output_path}")
 
-    print(f"Quantized saved:")
+
+def save_model_config(save_dir, config):
+    meta = {
+        "input_language": SRC_LANG,
+        "output_language": TGT_LANG,
+        "bidirectional": BIDIRECTIONAL,
+        "model_version": MODEL_VERSION,
+        "arch": ARCH_VERSION,
+        "d_model": config["d_model"],
+        "vocab_size": config["vocab_size"],
+        "num_layers": config["num_layers"],
+        "dim_head": config["dim_head"],
+        "num_heads": config["num_heads"],
+        "mlp_mult": config["mlp_mult"],
+    }
+    path = os.path.join(save_dir, "model_config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    print(f"model_config.json saved: {path}")
 
 
 def load_model(checkpoint_path):
@@ -118,7 +130,6 @@ def load_model(checkpoint_path):
         dropout=config["dropout"],
         tie_token_emb=True
     )
-
     model.load_state_dict(checkpoint["model_state_dict"])
     return model, config
 
@@ -132,13 +143,7 @@ if __name__ == "__main__":
     model, config = load_model(checkpoint)
 
     export_fp32(model, config, save_dir)
+    save_model_config(save_dir, config)
 
-    quantize_onnx(
-        f"{save_dir}/encoder_fp32.onnx",
-        f"{save_dir}/encoder_fp8.onnx"
-    )
-
-    quantize_onnx(
-        f"{save_dir}/decoder_fp32.onnx",
-        f"{save_dir}/decoder_fp8.onnx"
-    )
+    quantize_onnx(f"{save_dir}/encoder_fp32.onnx", f"{save_dir}/encoder_fp8.onnx")
+    quantize_onnx(f"{save_dir}/decoder_fp32.onnx", f"{save_dir}/decoder_fp8.onnx")
