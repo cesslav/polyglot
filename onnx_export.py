@@ -12,7 +12,27 @@ TGT_LANG = "EN"
 BIDIRECTIONAL = True
 MODEL_VERSION = "0.1"
 ARCH_VERSION = "v9"
+PAD_ID = 3
 _ATTN_KEYWORDS = frozenset({"to_q", "to_k", "to_v", "to_out", "to_qkv", "to_logits", "token_emb"})
+
+
+class EncoderWrapper(torch.nn.Module):
+    def __init__(self, encoder):
+        super().__init__()
+        self.encoder = encoder
+
+    def forward(self, src: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
+        return self.encoder(src, mask=src_mask)
+
+
+class DecoderWrapper(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.decoder = model.decoder
+        self.head = model.to_logits
+
+    def forward(self, tgt: torch.Tensor, memory: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
+        return self.head(self.decoder(tgt, memory, context_mask=src_mask))
 
 
 def export_fp32(model, config, save_dir):
@@ -21,46 +41,40 @@ def export_fp32(model, config, save_dir):
     model = model.to("cpu")
 
     dummy_src = torch.randint(0, config["vocab_size"], (2, 16))
+    dummy_src_mask = dummy_src.ne(PAD_ID)
 
+    encoder_w = EncoderWrapper(model.encoder)
     torch.onnx.export(
-        model.encoder,
-        (dummy_src,),
+        encoder_w,
+        (dummy_src, dummy_src_mask),
         f"{save_dir}/encoder_fp32.onnx",
-        input_names=["src"],
+        input_names=["src", "src_mask"],
         output_names=["memory"],
         dynamic_axes={
             "src": {0: "batch", 1: "seq"},
+            "src_mask": {0: "batch", 1: "seq"},
             "memory": {0: "batch", 1: "seq"},
         },
-        opset_version=17,
         dynamo=False
     )
 
-    class DecoderWrapper(torch.nn.Module):
-        def __init__(self, model):
-            super().__init__()
-            self.decoder = model.decoder
-            self.head = model.to_logits
-
-        def forward(self, tgt, memory):
-            return self.head(self.decoder(tgt, memory))
-
-    decoder = DecoderWrapper(model)
+    decoder_w = DecoderWrapper(model)
     dummy_tgt = torch.randint(0, config["vocab_size"], (2, 8))
     dummy_memory = torch.randn(2, 16, config["d_model"])
+    dummy_src_mask_dec = torch.ones(2, 16, dtype=torch.bool)
 
     torch.onnx.export(
-        decoder,
-        (dummy_tgt, dummy_memory),
+        decoder_w,
+        (dummy_tgt, dummy_memory, dummy_src_mask_dec),
         f"{save_dir}/decoder_fp32.onnx",
-        input_names=["tgt", "memory"],
+        input_names=["tgt", "memory", "src_mask"],
         output_names=["logits"],
         dynamic_axes={
             "tgt": {0: "batch", 1: "tgt_seq"},
             "memory": {0: "batch", 1: "src_seq"},
+            "src_mask": {0: "batch", 1: "src_seq"},
             "logits": {0: "batch", 1: "tgt_seq"},
         },
-        opset_version=17,
         dynamo=False
     )
     print("FP32 export done")
@@ -145,5 +159,5 @@ if __name__ == "__main__":
     export_fp32(model, config, save_dir)
     save_model_config(save_dir, config)
 
-    quantize_onnx(f"{save_dir}/encoder_fp32.onnx", f"{save_dir}/encoder_fp8.onnx")
-    quantize_onnx(f"{save_dir}/decoder_fp32.onnx", f"{save_dir}/decoder_fp8.onnx")
+    quantize_onnx(f"{save_dir}/encoder_fp32.onnx", f"{save_dir}/encoder_int8.onnx")
+    quantize_onnx(f"{save_dir}/decoder_fp32.onnx", f"{save_dir}/decoder_int8.onnx")

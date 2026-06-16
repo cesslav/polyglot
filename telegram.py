@@ -20,29 +20,26 @@ class ONNXTransformer:
         self.encoder = ort.InferenceSession(encoder_path, providers=providers)
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
-    def encode(self, src):
-        inputs = {
+    def encode(self, src, src_mask):
+        return self.encoder.run(["memory"], {
             "src": src.astype(np.int64),
-        }
+            "src_mask": src_mask
+        })[0]
 
-        memory = self.encoder.run(["memory"], inputs)[0]
-        return memory
-
-    def decode(self, tgt, memory):
-        inputs = {
+    def decode(self, tgt, memory, src_mask):
+        return self.decoder.run(["logits"], {
             "tgt": tgt.astype(np.int64),
             "memory": memory.astype(np.float32),
-        }
-
-        logits = self.decoder.run(["logits"], inputs)[0]
-        return logits
+            "src_mask": src_mask
+        })[0]
 
 
 def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=256):
     np.log_softmax = lambda x, axis: np.log(np_softmax(x))
     bos, eos = 0, 1
     src_np = src.cpu().numpy()
-    memory = model.encode(src_np)
+    src_mask = (src_np != 3)
+    memory = model.encode(src_np, src_mask)
     beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
     for _ in range(max_len):
         new_beams = []
@@ -52,7 +49,7 @@ def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=256):
                 new_beams.append((seq, score))
                 continue
 
-            logits = model.decode(seq, memory)
+            logits = model.decode(seq, memory, src_mask)
 
             next_token_logits = logits[:, -1, :]
             log_probs = np.log_softmax(next_token_logits, axis=-1)
@@ -106,10 +103,10 @@ async def translate(message: Message):
 if __name__ == "__main__":
     print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
 
-    tokenizer = AutoTokenizer.from_pretrained("./tokenizer/mixed48k")
+    tokenizer = AutoTokenizer.from_pretrained("./tokenizer")
     model = ONNXTransformer(
-        encoder_path="onnx_export/encoder_int8.onnx",
-        decoder_path="onnx_export/decoder_int8.onnx"
+        encoder_path="encoder.onnx",
+        decoder_path="decoder.onnx"
     )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     import asyncio

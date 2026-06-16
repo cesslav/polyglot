@@ -50,7 +50,7 @@ def beam_search(transformer, tokenizer, src, src_mask, beam_size=5, max_len=256,
 tokenizer = AutoTokenizer.from_pretrained("./tokenizer/")
 
 checkpoint_dir = "./t5s"
-checkpoint_name = "transformer_epoch_1.pt"
+checkpoint_name = "transformer.pt"
 device = "cpu"
 
 checkpoint = torch.load(os.path.join(checkpoint_dir, checkpoint_name), weights_only=False, map_location=device)

@@ -235,29 +235,28 @@ class OnnxTransformer:
         self.encoder = ort.InferenceSession(enc, providers=providers)
         self.decoder = ort.InferenceSession(dec, providers=providers)
 
-    def encode(self, src: np.ndarray) -> np.ndarray:
-        return self.encoder.run(["memory"], {"src": src.astype(np.int64)})[0]
+    def encode(self, src: np.ndarray, src_mask: np.ndarray) -> np.ndarray:
+        return self.encoder.run(["memory"], {
+            "src": src.astype(np.int64),
+            "src_mask": src_mask
+        })[0]
 
-    def decode(self, tgt: np.ndarray, memory: np.ndarray) -> np.ndarray:
-        return self.decoder.run(
-            ["logits"],
-            {"tgt": tgt.astype(np.int64), "memory": memory.astype(np.float32)},
-        )[0]
-
-
-def _np_log_softmax(x):
-    x = x - np.max(x, axis=-1, keepdims=True)
-    e = np.exp(x)
-    return np.log(e / np.sum(e, axis=-1, keepdims=True) + 1e-12)
+    def decode(self, tgt: np.ndarray, memory: np.ndarray, src_mask: np.ndarray) -> np.ndarray:
+        return self.decoder.run(["logits"], {
+            "tgt": tgt.astype(np.int64),
+            "memory": memory.astype(np.float32),
+            "src_mask": src_mask,
+        })[0]
 
 
 def greedy_search(model, tokenizer, src_tokens, max_len=MAX_OUTPUT_LEN, on_token=None):
     bos, eos = tokenizer.bos_id, tokenizer.eos_id
-    memory = model.encode(src_tokens[np.newaxis, :])
+    src_mask = (src_tokens != tokenizer.pad_id)[np.newaxis, :]
+    memory = model.encode(src_tokens[np.newaxis, :], src_mask)
     tokens = [bos]
     for _ in range(max_len - 1):
         tgt = np.array([tokens], dtype=np.int64)
-        logits = model.decode(tgt, memory)
+        logits = model.decode(tgt, memory, src_mask)
         next_id = int(np.argmax(logits[0, -1, :]))
         tokens.append(next_id)
         if on_token: on_token(np.array(tokens, dtype=np.int64))

@@ -208,7 +208,6 @@ HTML = """
         }
         models.forEach((model, i) => {
           const opt = document.createElement('option');
-          // models is now [{id, name}]; keep backward compat with plain strings
           const id    = typeof model === 'object' ? model.id   : model;
           const label = typeof model === 'object' ? model.name : model;
           opt.value       = id;
@@ -361,14 +360,18 @@ class ONNXTransformer:
         self.encoder = ort.InferenceSession(encoder_path, providers=providers)
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
-    def encode(self, src):
-        return self.encoder.run(["memory"], {"src": src.astype(np.int64)})[0]
+    def encode(self, src, src_mask):
+        return self.encoder.run(["memory"], {
+            "src": src.astype(np.int64),
+            "src_mask": src_mask
+        })[0]
 
-    def decode(self, tgt, memory):
-        return self.decoder.run(
-            ["logits"],
-            {"tgt": tgt.astype(np.int64), "memory": memory.astype(np.float32)}
-        )[0]
+    def decode(self, tgt, memory, src_mask):
+        return self.decoder.run(["logits"], {
+            "tgt": tgt.astype(np.int64),
+            "memory": memory.astype(np.float32),
+            "src_mask": src_mask
+        })[0]
 
 
 def get_model(name: str):
@@ -386,7 +389,8 @@ def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
     np.log_softmax = lambda x, axis: np.log(np_softmax(x))
     bos, eos = 0, 1
     src_np = src.cpu().numpy() if hasattr(src, "cpu") else np.array(src)
-    memory = model.encode(src_np)
+    src_mask = (src_np != 3)
+    memory = model.encode(src_np, src_mask)
     beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
 
     for _ in range(max_len):
@@ -395,7 +399,7 @@ def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
             if seq[0, -1] == eos:
                 new_beams.append((seq, score))
                 continue
-            logits = model.decode(seq, memory)
+            logits = model.decode(seq, memory, src_mask)
             log_probs = np.log_softmax(logits[:, -1, :], axis=-1)
             topk_idx = np.argsort(-log_probs, axis=-1)[0][:beam_size]
             topk_lp = log_probs[0][topk_idx]

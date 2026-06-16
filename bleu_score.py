@@ -15,6 +15,7 @@ SRC_LANG = "rus_Cyrl"
 TGT_LANG = "eng_Latn"
 MAX_SRC_LEN = 256
 BEAM_SIZE = 10
+PAD_ID = 3
 DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
 
 
@@ -43,10 +44,10 @@ def load_model(checkpoint_path, device):
     return model, config
 
 
-def beam_search(model, tokenizer, src, beam_size, max_len, device):
+def beam_search(model, tokenizer, src, src_mask, beam_size, max_len, device):
     bos, eos = 0, 1
     with torch.no_grad():
-        memory = model.encoder(src)
+        memory = model.encoder(src, mask=src_mask)
         beams = [(torch.tensor([[bos]], device=device), 0.0)]
 
         for _ in range(max_len):
@@ -55,7 +56,7 @@ def beam_search(model, tokenizer, src, beam_size, max_len, device):
                 if seq[0, -1].item() == eos:
                     new_beams.append((seq, score))
                     continue
-                logits = model.to_logits(model.decoder(seq, memory))
+                logits = model.to_logits(model.decoder(seq, memory, context_mask=src_mask))
                 log_probs = torch.log_softmax(logits[:, -1, :], dim=-1)
                 topk_lp, topk_t = torch.topk(log_probs, beam_size, dim=-1)
                 for k in range(beam_size):
@@ -86,7 +87,8 @@ def evaluate(model, tokenizer, src_sentences, ref_sentences, beam_size, max_len,
             max_length = 512,
         )["input_ids"].to(device)
 
-        hypothesis = beam_search(model, tokenizer, src, beam_size, max_len, device)
+        src_mask = src.ne(PAD_ID)
+        hypothesis = beam_search(model, tokenizer, src, src_mask, beam_size, max_len, device)
         hypotheses.append(hypothesis)
         total_chars += len(hypothesis)
 

@@ -18,21 +18,25 @@ class ONNXTransformer:
         self.encoder = ort.InferenceSession(encoder_path, providers=providers)
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
-    def encode(self, src):
-        return self.encoder.run(["memory"], {"src": src.astype(np.int64)})[0]
+    def encode(self, src, src_mask):
+        return self.encoder.run(["memory"], {
+            "src": src.astype(np.int64),
+            "src_mask": src_mask,
+        })[0]
 
-    def decode(self, tgt, memory):
-        return self.decoder.run(
-            ["logits"],
-            {"tgt": tgt.astype(np.int64), "memory": memory.astype(np.float32)},
-        )[0]
+    def decode(self, tgt, memory, src_mask):
+        return self.decoder.run(["logits"], {
+            "tgt": tgt.astype(np.int64),
+            "memory": memory.astype(np.float32),
+            "src_mask": src_mask
+        })[0]
 
 
-def beam_search_stream(model, tokenizer, src, beam_size=4, max_len=128):
+def beam_search_stream(model, tokenizer, src, src_mask, beam_size=4, max_len=128):
     np.log_softmax = lambda x, axis: np.log(np_softmax(x))
     bos, eos = 0, 1
 
-    memory = model.encode(src.cpu().numpy())
+    memory = model.encode(src.cpu().numpy(), src_mask)
     beams = [(np.array([[bos]], dtype=np.int64), 0.0)]
 
     num_out_tokens = 0
@@ -46,7 +50,7 @@ def beam_search_stream(model, tokenizer, src, beam_size=4, max_len=128):
                 new_beams.append((seq, score))
                 continue
 
-            logits = model.decode(seq, memory)
+            logits = model.decode(seq, memory, src_mask)
             log_probs = np.log_softmax(logits[:, -1, :], axis=-1)
             topk_idx = np.argsort(-log_probs, axis=-1)[0][:beam_size]
             topk_log_probs = log_probs[0][topk_idx]
@@ -116,9 +120,11 @@ if __name__ == "__main__":
             max_length = max_length,
         )["input_ids"]
 
+        src_mask = src.ne(3).numpy()
+
         print("\nOutput:")
 
-        gen = beam_search_stream(model, tokenizer, src, beam_size=1)
+        gen = beam_search_stream(model, tokenizer, src, src_mask, beam_size=1)
         prev_len = 0
         full_text = ""
         num_out_tokens = 0
