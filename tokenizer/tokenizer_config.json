@@ -8,6 +8,6 @@
   "pad_token": "<|pad|>",
   "padding_side": "right",
   "sep_token": "<|sep|>",
-  "tokenizer_class": "TokenizersBackend",
+  "tokenizer_class": "PreTrainedTokenizerFast",
   "unk_token": "<|unk|>"
 }

@@ -1,7 +1,9 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import sys
 import json
+import copy
 import time
+import math
 from datetime import datetime, timedelta
 import torch
 import torch.nn as nn
@@ -44,7 +46,7 @@ def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
         used.add(id(param))
 
         if "token_emb" in name:
-            depth = 0
+            depth = max_depth
         elif "encoder.layers" in name:
             idx = int(name.split("encoder.layers.")[1].split(".")[0])
             depth = idx + 1
@@ -114,15 +116,35 @@ def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN",
     last_save = datetime.now()
 
 
-def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, accumulation_steps=12):
+def snapshot_state(model, optimizer):
+    module = model.module if hasattr(model, "module") else model
+    model_state = {k: v.detach().clone() for k, v in module.state_dict().items()}
+    optimizer_state = copy.deepcopy(optimizer.state_dict())
+    return model_state, optimizer_state
+
+
+def restore_state(model, optimizer, snapshot):
+    model_state, optimizer_state = snapshot
+    module = model.module if hasattr(model, "module") else model
+    module.load_state_dict(model_state)
+    optimizer.load_state_dict(optimizer_state)
+
+
+def train_epoch(model, loader, optimizer, scheduler, criterion, device, num,
+                 accumulation_steps=12, clip_window=30, clip_mult=1.25, clip_default=3,
+                 snapshot_interval=100):
     model.train()
     total_loss = 0.0
     accum_loss = 0.0
     last_thousand_loss = deque(maxlen=1000)
     last_thousand_sum = 0.0
+    grad_norm_history = deque(maxlen=clip_window)
+    grad_norm_sum = 0.0
     counter = 0
     step = 0
     skipped = 0
+    rolled_back = 0
+    last_good = snapshot_state(model, optimizer)
 
     loop = tqdm(loader, desc=f"Epoch {num}") if rank == 0 else loader
 
@@ -132,7 +154,7 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
 
         try:
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                output_fwd = model(src, tgt[:, :-1])
+                output_fwd = model(src, tgt[:, :-1], src_mask=src.ne(PAD_ID), tgt_mask=tgt[:, :-1].ne(PAD_ID))
                 loss_fwd = criterion(
                     output_fwd.reshape(-1, vocab_size),
                     tgt[:, 1:].reshape(-1)
@@ -140,7 +162,7 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
             with model.no_sync():
                 loss_fwd.backward()
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                output_bwd = model(tgt, src[:, :-1])
+                output_bwd = model(tgt, src[:, :-1], src_mask=tgt.ne(PAD_ID), tgt_mask=src[:, :-1].ne(PAD_ID))
                 loss_bwd = criterion(
                     output_bwd.reshape(-1, vocab_size),
                     src[:, 1:].reshape(-1)
@@ -164,8 +186,42 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
         step += 1
 
         if step % accumulation_steps == 0 or step == len(loader):
-            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 15)
+            clip_norm = (
+                grad_norm_sum / len(grad_norm_history) * clip_mult
+                if len(grad_norm_history) == clip_window else clip_default
+            )
+            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+
+            if not torch.isfinite(total_norm):
+                skipped += 1
+                optimizer.zero_grad()
+                accum_loss = 0.0
+                if rank == 0:
+                    print(f"Пропуск шага: total_norm={total_norm}, пропусков: {skipped}")
+                continue
+
+            if len(grad_norm_history) == clip_window:
+                grad_norm_sum -= grad_norm_history[0]
+            grad_norm_history.append(total_norm.item())
+            grad_norm_sum += total_norm.item()
+
             optimizer.step()
+
+            with torch.no_grad():
+                total_param_norm = sum(
+                    p.norm().item() ** 2
+                    for p in model.parameters() if p.requires_grad
+                ) ** 0.5
+
+            if not math.isfinite(total_param_norm):
+                rolled_back += 1
+                restore_state(model, optimizer, last_good)
+                optimizer.zero_grad()
+                accum_loss = 0.0
+                if rank == 0:
+                    print(f"Обнаружен NaN в весах, откат на последний снимок.")
+                continue
+
             scheduler.step()
             optimizer.zero_grad()
 
@@ -177,18 +233,14 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
             last_thousand_loss.append(accum_loss)
             last_thousand_sum += accum_loss
 
+            if counter % snapshot_interval == 0:
+                last_good = snapshot_state(model, optimizer)
+
             if rank == 0:
                 lrs = [g["lr"] for g in optimizer.param_groups]
                 min_lr = min(lrs)
                 max_lr = max(lrs)
                 avg_lr = sum(lrs) / len(lrs)
-
-                with torch.no_grad():
-                    total_param_norm = sum(
-                        p.norm().item() ** 2
-                        for p in model.parameters() if p.requires_grad
-                    ) ** 0.5
-
                 update_ratio = total_norm / total_param_norm
 
                 loop.set_postfix_str(
@@ -197,13 +249,14 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
                     f"avg1k: {last_thousand_sum / len(last_thousand_loss):.6f}  "
                     f"max1k: {max(last_thousand_loss):.6f}  "
                     f"step: {counter}  "
-                    f"norm: {total_norm:.6f}  "
+                    f"norm: {total_norm:.4f}  "
+                    f"clip: {clip_norm:.4f}  "
                     f"save: {datetime.now() - last_save}  "
-                    f"skipped_steps: {skipped} "
-                    f"lr_min: {min_lr:.4e}  "
-                    f"lr_max: {max_lr:.4e}  "
-                    f"lr_avg: {avg_lr:.4e}  "
-                    f"upd_ratio: {update_ratio:.4e}"
+                    f"errors: {skipped + rolled_back}  "
+                    f"lr_min: {min_lr:.2e}  "
+                    f"lr_max: {max_lr:.2e}  "
+                    f"lr_avg: {avg_lr:.2e}  "
+                    f"upd_ratio: {update_ratio:.2e}"
                 )
             accum_loss = 0.0
 
@@ -219,19 +272,41 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num, acc
 
 def evaluate(model, loader, criterion, device):
     model.eval()
-    total_loss = 0
+    pad_id = criterion.ignore_index
+    fwd_loss_sum = 0.0
+    bwd_loss_sum = 0.0
+    counter = 0
     loop = tqdm(loader)
     with torch.no_grad():
         for batch in loop:
-            src, tgt = batch["input"].to(device).squeeze(), batch["output"].to(device).squeeze()
-            output = model(src, tgt[:, :-1])
-            loss = criterion(output.contiguous().view(-1, vocab_size),
-                             tgt[:, 1:].contiguous().view(-1))
-            total_loss += loss.item()
-    return total_loss / len(loader)
+            src = batch["input"].to(device).squeeze()
+            tgt = batch["output"].to(device).squeeze()
+            src_mask = src.ne(pad_id)
+            tgt_mask = tgt.ne(pad_id)
+
+            output_fwd = model(src, tgt[:, :-1], src_mask=src_mask, tgt_mask=tgt_mask[:, :-1])
+            loss_fwd = criterion(output_fwd.contiguous().view(-1, vocab_size),
+                                 tgt[:, 1:].contiguous().view(-1))
+
+            output_bwd = model(tgt, src[:, :-1], src_mask=tgt_mask, tgt_mask=src_mask[:, :-1])
+            loss_bwd = criterion(output_bwd.contiguous().view(-1, vocab_size),
+                                 src[:, 1:].contiguous().view(-1))
+
+            fwd_loss_sum += loss_fwd.item()
+            bwd_loss_sum += loss_bwd.item()
+            counter += 1
+
+            loop.set_postfix_str(
+                f"fwd: {fwd_loss_sum / counter:.6f}  "
+                f"bwd: {bwd_loss_sum / counter:.6f}  "
+                f"avg: {(fwd_loss_sum + bwd_loss_sum) / counter:.6f}"
+            )
+
+    return (fwd_loss_sum + bwd_loss_sum) / counter / 2, fwd_loss_sum / counter, bwd_loss_sum / counter
 
 
 if __name__ == "__main__":
+    PAD_ID = 3
     print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
     if "LOCAL_RANK" not in os.environ:
         import subprocess
@@ -315,9 +390,9 @@ if __name__ == "__main__":
             tie_token_emb=True,
         ).to(device)
 
-        param_groups = get_transformer_lrd(transformer, base_lr=train_config["init_lr"], decay=train_config["lr_decay"], weight_decay=0.01)
+        param_groups = get_transformer_lrd(transformer, base_lr=train_config["init_lr"], decay=train_config["lr_decay"], weight_decay=0.02)
         optimizer = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-9, fused=True)
-        scheduler = get_transformer_scheduler(optimizer, warmup_steps=3000)
+        scheduler = get_transformer_scheduler(optimizer, warmup_steps=6000)
         transformer.apply(init_weights)
         start_epoch = 0
         progress = 0
@@ -343,9 +418,9 @@ if __name__ == "__main__":
             tie_token_emb=True,
         ).to(device)
 
-        param_groups = get_transformer_lrd(transformer, base_lr=1, decay=1, weight_decay=0.01)
+        param_groups = get_transformer_lrd(transformer, base_lr=1e-5, decay=0.8, weight_decay=0.05)
         optimizer = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-9, fused=True)
-        scheduler = get_transformer_scheduler(optimizer, warmup_steps=8000)
+        scheduler = get_transformer_scheduler(optimizer, warmup_steps=6000)
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         transformer.load_state_dict(ckpt["model_state_dict"], strict=False)
@@ -378,7 +453,7 @@ if __name__ == "__main__":
         )
         train_loader = DataLoader(
             train_dataset, batch_size=batch_size, sampler=train_sampler,
-            num_workers=6, pin_memory=True, drop_last=True, persistent_workers=True,
+            num_workers=10, pin_memory=True, drop_last=True, persistent_workers=True,
         )
 
         if rank == 0:
@@ -395,7 +470,7 @@ if __name__ == "__main__":
         dist.destroy_process_group()
         sys.exit(1)
 
-    criterion = nn.CrossEntropyLoss(ignore_index=3, label_smoothing=0.05)
+    criterion = nn.CrossEntropyLoss(ignore_index=PAD_ID, label_smoothing=0.07)
 
     cold_save_counter = 0
     time.sleep(0.5)
@@ -412,8 +487,8 @@ if __name__ == "__main__":
         progress = 0
 
         if rank == 0:
-            val_loss = evaluate(transformer.module, val_loader, criterion, device)
-            print(f"Epoch [{epoch}/{num_epochs}] | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+            val_sum_loss, val_fwd_loss, val_bwd_loss = evaluate(transformer.module, val_loader, criterion, device)
+            print(f"Epoch [{epoch}/{num_epochs}] | Train Loss: {train_loss} | Val Loss: sum-{val_sum_loss:.4f}, fwd-{val_fwd_loss:.4f}, bwd-{val_bwd_loss:.4f}")
             print(torch.cuda.memory_allocated() / 1024 ** 3)
             save(transformer, epoch, optimizer, scheduler, train_loss, val_loss)
 

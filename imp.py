@@ -109,8 +109,8 @@ class MultiQuerySelfAttention(nn.Module):
         h = self.heads
 
         q = self.to_q(x).view(b, n, h, -1).transpose(1, 2)
-        k = self.to_k(x).unsqueeze(1).expand(b, h, n, -1)
-        v = self.to_v(x).unsqueeze(1).expand(b, h, n, -1)
+        k = self.to_k(x).unsqueeze(1)
+        v = self.to_v(x).unsqueeze(1)
 
         attn_bias = self.alibi.get_bias(n, n).unsqueeze(0)
         neg_inf = torch.finfo(q.dtype).min
@@ -119,7 +119,6 @@ class MultiQuerySelfAttention(nn.Module):
             attn_bias = attn_bias.masked_fill(self.causal_mask[:n, :n], neg_inf)
 
         if mask is not None:
-            attn_bias = attn_bias.expand(b, -1, -1, -1).clone()
             attn_bias = attn_bias.masked_fill(~mask[:, None, None, :], neg_inf)
 
         drop_p = self._drop_p if self.training else 0.0
@@ -160,8 +159,8 @@ class MultiQueryCrossAttention(nn.Module):
         m = context.shape[1]
 
         q = self.to_q(x).view(b, n, h, -1).transpose(1, 2)
-        k = self.to_k(context).unsqueeze(1).expand(b, h, m, -1)
-        v = self.to_v(context).unsqueeze(1).expand(b, h, m, -1)
+        k = self.to_k(context).unsqueeze(1)
+        v = self.to_v(context).unsqueeze(1)
 
         attn_bias = None
         if mask is not None or context_mask is not None:
@@ -316,8 +315,8 @@ class Transformer(nn.Module):
 
 if __name__ == "__main__":
     model = Transformer(
-        dim=256,
-        enc_num_tokens=8000,
+        dim=512,
+        enc_num_tokens=48000,
         enc_depth=4,
         enc_heads=8,
         enc_dim_head=32,
@@ -331,8 +330,8 @@ if __name__ == "__main__":
         max_seq_len=512,
     )
 
-    src = torch.randint(0, 8000, (2, 64))
-    tgt = torch.randint(0, 8000, (2, 48))
+    src = torch.randint(0, 48000, (2, 64))
+    tgt = torch.randint(0, 48000, (2, 48))
     src_mask = torch.ones(2, 64, dtype=torch.bool)
     tgt_mask = torch.ones(2, 48, dtype=torch.bool)
 
