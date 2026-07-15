@@ -15,7 +15,7 @@ app = FastAPI(
 )
 
 MODELS_DIR = Path(os.getenv("MODELS_DIR", "./onnx_export/models"))
-REQUIRED_FILES = {"encoder.onnx", "decoder.onnx", "tokenizer/tokenizer.json"}
+REQUIRED_FILES = {"encoder.onnx", "decoder.onnx", "tokenizer/tokenizer.json", "model_config.json"}
 
 
 class ModelInfo(BaseModel):

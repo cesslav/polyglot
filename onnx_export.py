@@ -1,5 +1,7 @@
 # This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.
 import json
+import shutil
+import tempfile
 import torch
 import os
 import onnx
@@ -13,7 +15,19 @@ BIDIRECTIONAL = True
 MODEL_VERSION = "0.1"
 ARCH_VERSION = "v9"
 PAD_ID = 3
-_ATTN_KEYWORDS = frozenset({"to_q", "to_k", "to_v", "to_out", "to_qkv", "to_logits", "token_emb"})
+
+QUANT_CONFIG = {
+    "attention": "fp32",
+    "feedforward": "int8",
+    "logits": "fp16",
+    "embeddings": "fp16",
+}
+
+PER_CHANNEL_INT8 = True
+
+_FEEDFORWARD_KEYWORDS = frozenset({"w_gate", "w_up", "w_down"})
+_LOGITS_KEYWORDS = frozenset({"to_logits", "head"})
+_EMBEDDING_KEYWORDS = frozenset({"token_emb"})
 
 
 class EncoderWrapper(torch.nn.Module):
@@ -80,32 +94,81 @@ def export_fp32(model, config, save_dir):
     print("FP32 export done")
 
 
-def get_ff_matmul_nodes(onnx_path):
+def classify_nodes(onnx_path):
     model = onnx.load(onnx_path)
-    ff_nodes = []
+    groups = {"attention": [], "logits": [], "embeddings": [], "feedforward": []}
     for node in model.graph.node:
-        if node.op_type != "MatMul":
-            continue
         name = node.name.lower()
-        if any(kw in name for kw in _ATTN_KEYWORDS):
-            continue
-        ff_nodes.append(node.name)
-    return ff_nodes
+        if node.op_type in ("MatMul", "Gemm"):
+            if any(kw in name for kw in _LOGITS_KEYWORDS):
+                groups["logits"].append(node.name)
+            elif any(kw in name for kw in _FEEDFORWARD_KEYWORDS):
+                groups["feedforward"].append(node.name)
+            else:
+                groups["attention"].append(node.name)
+        elif node.op_type == "Gather" and any(kw in name for kw in _EMBEDDING_KEYWORDS):
+            groups["embeddings"].append(node.name)
+
+    for group, nodes in groups.items():
+        print(f"{group}: найдено {len(nodes)} узлов ({onnx_path})")
+    return groups
 
 
-def quantize_onnx(input_path, output_path):
-    nodes = get_ff_matmul_nodes(input_path)
-    print(f"Quantizing {len(nodes)} FeedForward MatMul nodes in {input_path}")
+def quantize_int8(input_path, output_path, nodes_to_quantize, per_channel=PER_CHANNEL_INT8):
+    print(f"INT8: квантизация {len(nodes_to_quantize)} узлов ({input_path})")
     quantize_dynamic(
         model_input=input_path,
         model_output=output_path,
         weight_type=QuantType.QInt8,
-        nodes_to_quantize=nodes
+        nodes_to_quantize=nodes_to_quantize,
+        per_channel=per_channel,
     )
-    print(f"Quantized model saved: {output_path}")
+    print(f"INT8 модель сохранена: {output_path}")
 
 
-def save_model_config(save_dir, config):
+def quantize_fp16(input_path, output_path, target_nodes):
+    try:
+        from onnxconverter_common import float16
+    except ImportError as e:
+        raise ImportError("Не найден onnxconverter_common: pip install onnxconverter-common") from e
+
+    model = onnx.load(input_path)
+    all_names = {node.name for node in model.graph.node if node.name}
+    block_list = list(all_names - set(target_nodes))
+
+    fp16_model = float16.convert_float_to_float16(
+        model,
+        node_block_list=block_list,
+        keep_io_types=True,
+        disable_shape_infer=True,
+    )
+    onnx.save_model(fp16_model, output_path)
+    print(f"FP16: {len(target_nodes)} узлов переведено в half precision -> {output_path}")
+
+
+def apply_quantization_config(fp32_path, output_path, config, tmp_dir):
+    groups = classify_nodes(fp32_path)
+    current_path = fp32_path
+
+    int8_groups = [g for g, p in config.items() if p == "int8" and groups.get(g)]
+    if int8_groups:
+        nodes_to_quantize = [n for g in int8_groups for n in groups[g]]
+        step_path = os.path.join(tmp_dir, "step_int8.onnx")
+        quantize_int8(current_path, step_path, nodes_to_quantize=nodes_to_quantize)
+        current_path = step_path
+
+    fp16_groups = [g for g, p in config.items() if p == "fp16" and groups.get(g)]
+    if fp16_groups:
+        target_nodes = [n for g in fp16_groups for n in groups[g]]
+        step_path = os.path.join(tmp_dir, "step_fp16.onnx")
+        quantize_fp16(current_path, step_path, target_nodes=target_nodes)
+        current_path = step_path
+
+    shutil.copy(current_path, output_path)
+    print(f"Готово: {output_path}")
+
+
+def save_model_config(save_dir, config, quant_config):
     meta = {
         "input_language": SRC_LANG,
         "output_language": TGT_LANG,
@@ -118,6 +181,7 @@ def save_model_config(save_dir, config):
         "dim_head": config["dim_head"],
         "num_heads": config["num_heads"],
         "mlp_mult": config["mlp_mult"],
+        "quantization": quant_config,
     }
     path = os.path.join(save_dir, "model_config.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -157,7 +221,12 @@ if __name__ == "__main__":
     model, config = load_model(checkpoint)
 
     export_fp32(model, config, save_dir)
-    save_model_config(save_dir, config)
+    save_model_config(save_dir, config, QUANT_CONFIG)
 
-    quantize_onnx(f"{save_dir}/encoder_fp32.onnx", f"{save_dir}/encoder_int8.onnx")
-    quantize_onnx(f"{save_dir}/decoder_fp32.onnx", f"{save_dir}/decoder_int8.onnx")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        apply_quantization_config(
+            f"{save_dir}/encoder_fp32.onnx", f"{save_dir}/encoder_quant.onnx", QUANT_CONFIG, tmp_dir
+        )
+        apply_quantization_config(
+            f"{save_dir}/decoder_fp32.onnx", f"{save_dir}/decoder_quant.onnx", QUANT_CONFIG, tmp_dir
+        )
