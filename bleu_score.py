@@ -15,9 +15,9 @@ TOKENIZER_PATH = "./tokenizer/"
 SRC_LANG = "rus_Cyrl"
 TGT_LANG = "eng_Latn"
 MAX_SRC_LEN = 512
-BEAM_SIZE = 8
+BEAM_SIZE = 1
 PAD_ID = 3
-DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 COMPARE_MODE = True
@@ -27,7 +27,7 @@ HF_MODELS = [
     {"id": "facebook/nllb-200-distilled-600M", "generate_kwargs": {"forced_bos_token_id": "eng_Latn"}},
     {"id": "facebook/nllb-200-3.3B", "generate_kwargs": {"forced_bos_token_id": "eng_Latn"}},
 ]
-HF_BEAM_SIZE = 8
+HF_BEAM_SIZE = 1
 HF_MAX_LEN = 512
 PLOT_ENABLED = True
 
@@ -204,9 +204,6 @@ def format_comparison_table(results, model_names):
 
 
 def plot_comparison(results, model_names, save_path):
-    if not MATPLOTLIB_AVAILABLE:
-        print("matplotlib не установлен, график пропущен.")
-        return
 
     plt.figure(figsize=(12, 6))
     for name in model_names:

@@ -11,3 +11,8 @@ test.py
 *.pt
 *.arrow
 *.tar.gz
+/test1.py
+/.models/
+/cold_saves/
+/cold_saves_512/
+/cold_saves_512_big/

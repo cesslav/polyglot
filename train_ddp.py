@@ -490,7 +490,7 @@ if __name__ == "__main__":
             val_sum_loss, val_fwd_loss, val_bwd_loss = evaluate(transformer.module, val_loader, criterion, device)
             print(f"Epoch [{epoch}/{num_epochs}] | Train Loss: {train_loss} | Val Loss: sum-{val_sum_loss:.4f}, fwd-{val_fwd_loss:.4f}, bwd-{val_bwd_loss:.4f}")
             print(torch.cuda.memory_allocated() / 1024 ** 3)
-            save(transformer, epoch, optimizer, scheduler, train_loss, val_loss)
+            save(transformer, epoch, optimizer, scheduler, train_loss, val_sum_loss)
 
         dist.barrier()
 
