@@ -5,6 +5,12 @@ from transformers import PreTrainedTokenizerFast
 
 
 def get_training_corpus(batch=10):
+    """Генератор корпуса для обучения униграмм-токенизатора: порциями выдаёт токенизированные input и output.
+            Входы:
+                batch (int) - размер порции записей из глобального датасета dataset.
+            Выходы:
+                chunk (list) - порция последовательностей id токенов (input или output датасета).
+    """
     for i in dataset.iter(batch_size=batch):
         yield i["input"]
         yield i["output"]

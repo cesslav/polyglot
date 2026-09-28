@@ -33,6 +33,14 @@ PLOT_ENABLED = True
 
 
 def load_model(checkpoint_path, device):
+    """Загружает модель Polyglot из PyTorch-чекпоинта в режиме inference.
+            Входы:
+                checkpoint_path (str) - путь к файлу .pt;
+                device (str) - устройство вычислений ("cuda"/"cpu").
+            Выходы:
+                model (Transformer) - модель в режиме eval;
+                config (dict) - конфигурация модели из чекпоинта.
+    """
     checkpoint = torch.load(checkpoint_path, weights_only=False, map_location=device)
     config = checkpoint["config"]
 
@@ -58,6 +66,14 @@ def load_model(checkpoint_path, device):
 
 
 def load_hf_model(model_id, device):
+    """Загружает seq2seq-модель и токенизатор из репозитория HuggingFace.
+            Входы:
+                model_id (str) - идентификатор репозитория HF;
+                device (str) - устройство вычислений.
+            Выходы:
+                tokenizer (AutoTokenizer) - токенизатор;
+                model (AutoModelForSeq2SeqLM) - модель в режиме eval.
+    """
     print(f"Загрузка модели с HF: {model_id}...")
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_id).to(device)
@@ -67,6 +83,13 @@ def load_hf_model(model_id, device):
 
 
 def resolve_generate_kwargs(tokenizer, generate_kwargs):
+    """Разрешает строковые значения forced_bos_token_id в числовые id токенов.
+            Входы:
+                tokenizer (AutoTokenizer) - объект токенизатора;
+                generate_kwargs (dict) - аргументы model.generate.
+            Выходы:
+                kwargs (dict) - та же структура, но с id вместо кода языка в forced_bos_token_id.
+    """
     kwargs = dict(generate_kwargs)
     forced = kwargs.get("forced_bos_token_id")
     if isinstance(forced, str):
@@ -78,6 +101,18 @@ def resolve_generate_kwargs(tokenizer, generate_kwargs):
 
 
 def beam_search(model, tokenizer, src, src_mask, beam_size, max_len, device):
+    """Поиск лучом (beam search) для собственной модели Polyglot.
+            Входы:
+                model (Transformer) - модель;
+                tokenizer (AutoTokenizer) - токенизатор;
+                src (Tensor) - id входных токенов (B, S);
+                src_mask (Tensor) - маска не-pad позиций;
+                beam_size (int) - ширина луча;
+                max_len (int) - максимальная длина перевода;
+                device (str) - устройство.
+            Выходы:
+                result (str) - декодированный лучший перевод.
+    """
     bos, eos = 0, 1
     with torch.no_grad():
         memory = model.encoder(src, mask=src_mask)
@@ -106,7 +141,23 @@ def beam_search(model, tokenizer, src, src_mask, beam_size, max_len, device):
 
 
 def make_own_translate_fn(model, tokenizer, beam_size, max_len, device):
+    """Фабрика функции перевода одной строки собственной моделью Polyglot.
+            Входы:
+                model (Transformer) - модель;
+                tokenizer (AutoTokenizer) - токенизатор;
+                beam_size (int) - ширина луча;
+                max_len (int) - максимальная длина перевода;
+                device (str) - устройство.
+            Выходы:
+                translate_one (callable) - функция translate_one(text: str) -> str, переводящая один текст.
+    """
     def translate_one(text):
+        """Переводит один текст: токенизирует с padding до 512 и запускает beam_search.
+                Входы:
+                    text (str) - исходный текст.
+                Выходы:
+                    result (str) - перевод.
+        """
         src = tokenizer(
             text,
             return_tensors = "pt",
@@ -122,9 +173,26 @@ def make_own_translate_fn(model, tokenizer, beam_size, max_len, device):
 
 
 def make_hf_translate_fn(model, tokenizer, beam_size, max_len, device, generate_kwargs=None):
+    """Фабрика функции перевода одной строки моделью из HuggingFace.
+            Входы:
+                model (AutoModelForSeq2SeqLM) - HF seq2seq-модель;
+                tokenizer (AutoTokenizer) - её токенизатор;
+                beam_size (int) - ширина луча;
+                max_len (int) - максимальная длина перевода;
+                device (str) - устройство;
+                generate_kwargs (dict|None) - дополнительные аргументы model.generate.
+            Выходы:
+                translate_one (callable) - функция translate_one(text: str) -> str, переводящая один текст.
+    """
     generate_kwargs = generate_kwargs or {}
 
     def translate_one(text):
+        """Переводит один текст через model.generate с beam search.
+                Входы:
+                    text (str) - исходный текст.
+                Выходы:
+                    result (str) - перевод.
+        """
         inputs = tokenizer(
             text,
             return_tensors = "pt",
@@ -144,6 +212,19 @@ def make_hf_translate_fn(model, tokenizer, beam_size, max_len, device, generate_
 
 
 def evaluate(translate_fn, src_sentences, ref_sentences, desc="Перевод"):
+    """Оценивает качество перевода корпуса: переводит все предложения и считает BLEU.
+            Входы:
+                translate_fn (callable) - функция перевода одного текста;
+                src_sentences (list[str]) - исходные предложения;
+                ref_sentences (list[str]) - эталонные переводы;
+                desc (str) - подпись прогресс-бара.
+            Выходы:
+                corpus_result (BLEUScore) - результат corpus BLEU;
+                hypotheses (list[str]) - список переводов-hypothesis;
+                sentence_bleu (list[float]) - построчные BLEU;
+                elapsed (float) - время в секундах;
+                total_chars (int) - общее число символов.
+    """
     hypotheses = []
     t_start = time.perf_counter()
     total_chars = 0
@@ -164,6 +245,15 @@ def evaluate(translate_fn, src_sentences, ref_sentences, desc="Перевод"):
 
 
 def run_comparison(models, src_sentences, ref_sentences, split):
+    """Прогоняет оценку BLEU на корпусе для всех моделей-участниц сравнения.
+            Входы:
+                models (list[(str, callable)]) - пары «имя модели, функция перевода»;
+                src_sentences (list[str]) - исходные предложения;
+                ref_sentences (list[str]) - эталоны;
+                split (str) - название сплита.
+            Выходы:
+                results (dict) - по имени модели: corpus BLEU, hypothesis, построчные BLEU, время, число символов.
+    """
     results = {}
     for name, translate_fn in models:
         print(f"\nПеревод корпуса моделью «{name}» ({split})...")
@@ -181,6 +271,13 @@ def run_comparison(models, src_sentences, ref_sentences, split):
 
 
 def format_comparison_table(results, model_names):
+    """Формирует текстовую таблицу сравнения BLEU-метрик по моделям.
+            Входы:
+                results (dict) - результаты run_comparison;
+                model_names (list[str]) - порядок имён моделей.
+            Выходы:
+                lines (list[str]) - строки таблицы (заголовок, разделитель, строки моделей).
+    """
     headers = ["Модель", "BLEU", "min", "avg", "max"]
     rows = []
     for name in model_names:
@@ -196,6 +293,12 @@ def format_comparison_table(results, model_names):
     widths = [max(len(headers[i]), *(len(row[i]) for row in rows)) for i in range(len(headers))]
 
     def format_row(cells):
+        """Склеивает ячейки строки таблицы с выравниванием по вычисленным ширинам колонок.
+                Входы:
+                    cells (list[str]) - ячейки строки.
+                Выходы:
+                    line (str) - собранная строка таблицы.
+        """
         return " | ".join(cell.ljust(widths[i]) for i, cell in enumerate(cells))
 
     lines = [format_row(headers), "-+-".join("-" * w for w in widths)]
@@ -204,7 +307,14 @@ def format_comparison_table(results, model_names):
 
 
 def plot_comparison(results, model_names, save_path):
-
+    """Строит и сохраняет график построчного BLEU всех моделей, пытается показать его.
+            Входы:
+                results (dict) - результаты run_comparison;
+                model_names (list[str]) - имена моделей;
+                save_path (str) - путь для сохранения PNG.
+            Выходы:
+                None - график сохраняется в файл, при отсутствии дисплея вывод пропускается.
+    """
     plt.figure(figsize=(12, 6))
     for name in model_names:
         plt.plot(results[name]["sentence_bleu"], label=name, linewidth=1, alpha=0.8)
@@ -223,6 +333,18 @@ def plot_comparison(results, model_names, save_path):
 
 
 def write_compare_log(log_path, own_config, split, src_sentences, ref_sentences, results, model_names):
+    """Записывает в файл полный отчёт о сравнении: метрики, таблицу и примеры переводов.
+            Входы:
+                log_path (str) - путь к файлу;
+                own_config (dict) - конфигурация модели Polyglot;
+                split (str) - сплит;
+                src_sentences (list[str]) - исходные тексты;
+                ref_sentences (list[str]) - эталоны;
+                results (dict) - результаты run_comparison;
+                model_names (list[str]) - имена моделей.
+            Выходы:
+                None - данные записываются в log_path.
+    """
     n = len(src_sentences)
     with open(log_path, "w", encoding="utf-8") as f:
         f.write(f"Checkpoint (Polyglot): {CHECKPOINT_PATH}\n")
@@ -250,6 +372,15 @@ def write_compare_log(log_path, own_config, split, src_sentences, ref_sentences,
 
 
 def load_flores(src_lang, tgt_lang, split="devtest"):
+    """Загружает пары предложений из набора FLORES+ для оценки.
+            Входы:
+                src_lang (str) - код языка-источника (ISO 15924, напр. "rus_Cyrl");
+                tgt_lang (str) - код языка перевода;
+                split (str) - сплит датасета ("dev"/"devtest").
+            Выходы:
+                src_sentences (list[str]) - исходные предложения;
+                ref_sentences (list[str]) - эталонные предложения.
+    """
     print(f"Загрузка FLORES+ ({split}, {src_lang} / {tgt_lang})...")
     ds_src = load_dataset("openlanguagedata/flores_plus", src_lang, split=split)
     ds_tgt = load_dataset("openlanguagedata/flores_plus", tgt_lang, split=split)

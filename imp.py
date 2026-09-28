@@ -6,36 +6,76 @@ import torch.nn.functional as F
 
 
 class RMSNorm(nn.Module):
+    """Нормализация по среднеквадратичному значению (RMS, Root Mean Square) с обучаемым коэффициентом масштабирования gamma.
+            Конструктор:
+                dim (int) - размерность нормализуемого последнего измерения;
+                eps (float) - слагаемое численной стабильности.
+    """
     def __init__(self, dim: int, eps: float = 1e-8):
         super().__init__()
         self.eps = eps
         self.gamma = nn.Parameter(torch.ones(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Нормирует вход по RMS и масштабирует гаммой.
+                Входы:
+                    x (Tensor [..., dim]) - входные представления.
+                Выходы:
+                    output (Tensor [..., dim]) - нормализованные и масштабированные представления.
+        """
         rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()
         return x * rms * self.gamma
 
 
 class Residual(nn.Module):
+    """Обёртка остаточного соединения: применяет функцию к входу и складывает результат с самим входом.
+            Конструктор:
+                fn (nn.Module) - модуль-преобразование.
+    """
     def __init__(self, fn: nn.Module):
         super().__init__()
         self.fn = fn
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        """Применяет внутреннее преобразование и прибавляет исходный тензор.
+                Входы:
+                    x (Tensor) - вход;
+                    kwargs (dict) - дополнительные аргументы для fn (например, mask).
+                Выходы:
+                    output (Tensor) - fn(x) + x.
+        """
         return self.fn(x, **kwargs) + x
 
 
 class PreNorm(nn.Module):
+    """Пре-нормализация: сначала RMSNorm, затем преобразование fn (стиль pre-LN Transformer).
+            Конструктор:
+                dim (int) - размерность;
+                fn (nn.Module) - преобразование после нормализации.
+    """
     def __init__(self, dim: int, fn: nn.Module):
         super().__init__()
         self.norm = RMSNorm(dim)
         self.fn = fn
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        """Нормирует вход и прогоняет через внутреннее преобразование.
+                Входы:
+                    x (Tensor) - вход;
+                    kwargs (dict) - дополнительные аргументы, пробрасываются в fn.
+                Выходы:
+                    output (Tensor) - результат fn(norm(x)).
+        """
         return self.fn(self.norm(x), **kwargs)
 
 
 class FeedForward(nn.Module):
+    """Позиционно-независимый MLP в стиле GLU (gate/up/down-проекции, активация SiLU).
+            Конструктор:
+                dim (int) - размерность входа/выхода;
+                mult (int) - множитель внутренней размерности;
+                dropout (float) - вероятность отбрасывания.
+    """
     def __init__(self, dim: int, mult: int = 4, dropout: float = 0.0):
         super().__init__()
         inner_dim = int(dim * mult)
@@ -45,10 +85,21 @@ class FeedForward(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Вычисляет GLU-преобразование: down(SiLU(gate(x)) * up(x)) с dropout.
+                Входы:
+                    x (Tensor) - тензор (..., dim).
+                Выходы:
+                    output (Tensor) - результат той же формы (..., dim).
+        """
         return self.dropout(self.w_down(F.silu(self.w_gate(x)) * self.w_up(x)))
 
 
 class ALiBi(nn.Module):
+    """Bias-матрицы для ALiBi (Attention with Linear Biases): линейное расстояние от сужением на каждый head, без позиционных эмбеддингов.
+            Конструктор:
+                heads (int) - число attention-голов;
+                max_seq_len (int) - максимальная длина последовательности.
+    """
     def __init__(self, heads: int, max_seq_len: int = 1024):
         super().__init__()
         slopes = self._slopes(heads)
@@ -59,7 +110,19 @@ class ALiBi(nn.Module):
 
     @staticmethod
     def _slopes(n: int) -> torch.Tensor:
+        """Вычисляет вектор наклонностей (slopes) для n голов по геометрической прогрессии 2^(-(2^-(m-4-i))).
+                Входы:
+                    n (int) - число голов (не обязательно степень двойки).
+                Выходы:
+                    slopes (Tensor (n,)) - наклонности для каждой головы.
+        """
         def _pow2(m: int):
+            """Возвращает список из m наклонностей по формуле 2^(-(2^-(m-4-i))) для i = 0..m-1 (m — степень двойки).
+                    Входы:
+                        m (int) - число наклонностей (степень двойки).
+                    Выходы:
+                        slopes (list[float]) - список наклонностей.
+            """
             start = 2.0 ** (-(2.0 ** -(math.log2(m) - 3)))
             return [start * (start ** i) for i in range(m)]
 
@@ -71,9 +134,25 @@ class ALiBi(nn.Module):
         return torch.tensor(_pow2(n_floor) + extra, dtype=torch.float32)
 
     def get_bias(self, q_len: int, k_len: int) -> torch.Tensor:
+        """Вырезает подматрицу ALiBi-смещений для текущих длин запроса и ключей.
+                Входы:
+                    q_len (int) - длина последовательности запросов;
+                    k_len (int) - длина последовательности ключей.
+                Выходы:
+                    bias (Tensor (heads, q_len, k_len)) - матрица смещений для attention.
+        """
         return self._bias[:, k_len - q_len : k_len, :k_len]
 
 class MultiQuerySelfAttention(nn.Module):
+    """Самовнимание в схеме multi-query attention: много query-голов, по одной общей K/V-паре, с ALiBi-смещениями.
+            Конструктор:
+                dim (int) - размерность;
+                heads (int) - число query-голов;
+                dim_head (int) - размерность головы;
+                causal (bool) - использовать ли каузальную (нижнетреугольную) маску;
+                dropout (float) - dropout внимания;
+                max_seq_len (int) - максимальная длина последовательности для ALiBi.
+    """
     def __init__(
         self,
         *,
@@ -105,6 +184,13 @@ class MultiQuerySelfAttention(nn.Module):
         x: torch.Tensor,
         mask = None,
     ) -> torch.Tensor:
+        """Вычисляет multi-query самовнимание с ALiBi и опциональными каузальной и pad-масками.
+                Входы:
+                    x (Tensor) - (batch, seq, dim), входная последовательность;
+                    mask (Tensor|None) - булева маска (batch, seq), True — валидный токен.
+                Выходы:
+                    output (Tensor) - (batch, seq, dim), результат внимания.
+        """
         b, n, _ = x.shape
         h = self.heads
 
@@ -127,6 +213,14 @@ class MultiQuerySelfAttention(nn.Module):
 
 
 class MultiQueryCrossAttention(nn.Module):
+    """Кросс-внимание в схеме multi-query attention: query из декодера, общие K/V из контекста кодера.
+            Конструктор:
+                dim (int) - размерность декодера;
+                context_dim (int|None) - размерность контекста (по умолчанию = dim);
+                heads (int) - число query-голов;
+                dim_head (int) - размерность головы;
+                dropout (float) - dropout внимания.
+    """
     def __init__(
         self,
         *,
@@ -154,6 +248,15 @@ class MultiQueryCrossAttention(nn.Module):
         mask = None,
         context_mask = None,
     ) -> torch.Tensor:
+        """Вычисляет кросс-внимание «декодер -> контекст кодера» с pad-масками обеих сторон.
+                Входы:
+                    x (Tensor) - (batch, n, dim), последовательность декодера;
+                    context (Tensor) - (batch, m, context_dim), контекст кодера;
+                    mask (Tensor|None) - маска x (batch, n);
+                    context_mask (Tensor|None) - маска контекста (batch, m).
+                Выходы:
+                    output (Tensor) - (batch, n, dim), результат кросс-внимания.
+        """
         b, n, _ = x.shape
         h = self.heads
         m = context.shape[1]
@@ -177,6 +280,17 @@ class MultiQueryCrossAttention(nn.Module):
 
 
 class Encoder(nn.Module):
+    """Кодер seq2seq-модели: эмбеддинги токенов + стек блоков «self-attention (ALiBi) + FFN» с pre-norm и residual, финальный RMSNorm.
+            Конструктор:
+                dim (int) - размерность скрытого слоя;
+                num_tokens (int) - размер словаря;
+                depth (int) - число слоёв;
+                heads (int) - число голов;
+                dim_head (int) - размерность головы;
+                mlp_mult (int) - множитель MLP;
+                dropout (float) - dropout;
+                max_seq_len (int) - максимальная длина для ALiBi.
+    """
     def __init__(
         self,
         *,
@@ -208,6 +322,13 @@ class Encoder(nn.Module):
         x: torch.Tensor,
         mask = None,
     ) -> torch.Tensor:
+        """Кодирует последовательность токенов в контекстные представления.
+                Входы:
+                    x (Tensor) - (batch, seq), id токенов;
+                    mask (Tensor|None) - булева маска (batch, seq), True — валидный токен.
+                Выходы:
+                    memory (Tensor) - (batch, seq, dim), память кодера.
+        """
         x = self.token_emb(x)
         for attn, ff in self.layers:
             x = attn(x, mask=mask)
@@ -216,6 +337,17 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
+    """Декодер seq2seq-модели: эмбеддинги + стек блоков «каузальное self-attention + cross-attention + FFN», финальный RMSNorm.
+            Конструктор:
+                dim (int) - размерность скрытого слоя;
+                num_tokens (int) - размер словаря;
+                depth (int) - число слоёв;
+                heads (int) - число голов;
+                dim_head (int) - размерность головы;
+                mlp_mult (int) - множитель MLP;
+                dropout (float) - dropout;
+                max_seq_len (int) - максимальная длина для ALiBi.
+    """
     def __init__(
         self,
         *,
@@ -252,6 +384,15 @@ class Decoder(nn.Module):
         mask = None,
         context_mask = None,
     ) -> torch.Tensor:
+        """Декодирует последовательность с учётом контекста кодера.
+                Входы:
+                    x (Tensor) - (batch, tgt_seq), id входных токенов декодера;
+                    context (Tensor) - (batch, src_seq, dim), память кодера;
+                    mask (Tensor|None) - маска x;
+                    context_mask (Tensor|None) - маска контекста.
+                Выходы:
+                    output (Tensor) - (batch, tgt_seq, dim), представления декодера.
+        """
         x = self.token_emb(x)
         for attn, cross_attn, ff in self.layers:
             x = attn(x, mask=mask)
@@ -261,6 +402,18 @@ class Decoder(nn.Module):
 
 
 class Transformer(nn.Module):
+    """Полная seq2seq-модель «Encoder + Decoder + логит-головка» с общим словарём и (опционально) связанными эмбеддингами.
+            Конструктор:
+                dim (int) - размерность скрытого слоя;
+                enc_num_tokens/dec_num_tokens (int) - размеры словарей кодера/декодера;
+                enc_depth/dec_depth (int) - число слоёв;
+                enc_heads/dec_heads (int) - число голов;
+                enc_dim_head/dec_dim_head (int) - размерность головы;
+                enc_mlp_mult/dec_mlp_mult (int) - множители MLP;
+                dropout (float) - dropout;
+                max_seq_len (int) - максимальная длина для ALiBi;
+                tie_token_emb (bool) - общие ли веса эмбеддингов кодера и декодера.
+    """
     def __init__(
         self,
         *,
@@ -308,6 +461,15 @@ class Transformer(nn.Module):
         src_mask = None,
         tgt_mask = None,
     ) -> torch.Tensor:
+        """Прогоняет исходную и целевую последовательности через кодер и декодер, выдаёт logits.
+                Входы:
+                    src (Tensor) - (batch, src_seq), id исходных токенов;
+                    tgt (Tensor) - (batch, tgt_seq), id целевых токенов;
+                    src_mask (Tensor|None) - маска исходного текста;
+                    tgt_mask (Tensor|None) - маска целевого текста.
+                Выходы:
+                    logits (Tensor) - (batch, tgt_seq, dec_num_tokens), logits по словарю на каждую позицию.
+        """
         context = self.encoder(src, mask=src_mask)
         x = self.decoder(tgt, context, mask=tgt_mask, context_mask=src_mask)
         return self.to_logits(x)

@@ -9,6 +9,19 @@ from imp import Transformer
 
 def beam_search(transformer, tokenizer, src, src_mask, beam_size=5, max_len=256,
                 repetition_penalty=1.3, device="cpu"):
+    """Поиск лучом с штрафом за повторы для генерации перевода PyTorch-моделью.
+            Входы:
+                transformer (Transformer) - модель;
+                tokenizer (AutoTokenizer) - токенизатор;
+                src (Tensor) - id входных токенов (1, S);
+                src_mask (Tensor) - маска не-pad позиций;
+                beam_size (int) - ширина луча;
+                max_len (int) - максимальная длина перевода;
+                repetition_penalty (float) - штраф за повтор уже выданных токенов;
+                device (str) - устройство.
+            Выходы:
+                result (str) - декодированный перевод (луч с наибольшей средней лог-вероятностью на токен).
+    """
     bos, eos = 0, 1
     with torch.no_grad():
         enc = transformer.encoder(src, mask=src_mask)

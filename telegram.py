@@ -22,6 +22,13 @@ CONFIG = {
 
 
 class ProxyConfig:
+    """Описание одного MTProto-прокси для подключения бота к Telegram.
+            Конструктор:
+                host (str) - адрес прокси;
+                port (int) - порт;
+                secret (str|None) - секретный ключ прокси.
+    """
+
     def __init__(self, host: str, port: int, secret: str = None):
         self.host = host
         self.port = port
@@ -29,6 +36,12 @@ class ProxyConfig:
         self.type = "MTProto"
 
     def get_proxy_dict(self) -> dict:
+        """Формирует словарь прокси в формате, ожидаемом aiogram (scheme/host/port/secret).
+                Входы:
+                    None - поля берутся из объекта.
+                Выходы:
+                    proxy (dict) - параметры прокси для Bot(proxy=...).
+        """
         proxy = {
             "scheme": self.type.lower(),
             "host": self.host,
@@ -40,21 +53,43 @@ class ProxyConfig:
 
 
 class ProxyManager:
+    """Управляет набором прокси: отслеживает доступность и переключается на следующий при сбое.
+            Конструктор:
+                proxies (list[ProxyConfig]) - список прокси по порядку переключения.
+    """
     def __init__(self, proxies: list[ProxyConfig]):
         self.proxies = proxies
         self.available = [True] * len(proxies)
         self.current_index = 0
 
     def get_current_proxy(self) -> ProxyConfig | None:
+        """Возвращает текущий активный прокси.
+                Входы:
+                    None.
+                Выходы:
+                    proxy (ProxyConfig|None) - текущий прокси; None, если список пуст.
+        """
         if not self.proxies:
             return None
         return self.proxies[self.current_index]
 
     def get_current_proxy_dict(self) -> dict | None:
+        """Возвращает текущий прокси в виде словаря aiogram.
+                Входы:
+                    None.
+                Выходы:
+                    proxy (dict|None) - словарь прокси; None, если прокси нет.
+        """
         proxy = self.get_current_proxy()
         return proxy.get_proxy_dict() if proxy else None
 
     async def check_proxy(self, proxy: ProxyConfig) -> bool:
+        """Проверяет доступность прокси попыткой открыть (и тут же закрыть) сессию бота через него.
+                Входы:
+                    proxy (ProxyConfig) - проверяемый прокси.
+                Выходы:
+                    is_available (bool) - True, если соединение удалось.
+        """
         try:
             proxy_dict = proxy.get_proxy_dict()
             async with Bot(token="dummy", proxy=proxy_dict) as dummy_bot:
@@ -64,6 +99,12 @@ class ProxyManager:
             return False
 
     async def validate_proxies(self) -> bool:
+        """Проверяет все прокси и помечает доступные, печатает статус каждого.
+                Входы:
+                    None.
+                Выходы:
+                    is_available (bool) - True, если хотя бы один прокси доступен (или список пуст).
+        """
         if not self.proxies:
             return True
         for i, proxy in enumerate(self.proxies):
@@ -72,6 +113,12 @@ class ProxyManager:
         return any(self.available)
 
     def switch_proxy(self):
+        """Переключает активный прокси на следующий доступный в цикле.
+                Входы:
+                    None.
+                Выходы:
+                    None - current_index сдвигается; при отсутствии доступных бросает RuntimeError.
+        """
         if not self.proxies:
             return
         for _ in range(len(self.proxies)):
@@ -84,18 +131,40 @@ class ProxyManager:
 
 
 class ONNXTransformer:
+    """Обёртка над ONNX-сессиями кодера и декодера для инференса в боте.
+            Конструктор:
+                encoder_path (str) - путь к encoder.onnx;
+                decoder_path (str) - путь к decoder.onnx;
+                device (str) - зарезервированный параметр (используется CPUExecutionProvider).
+    """
+
     def __init__(self, encoder_path, decoder_path, device="cpu"):
         providers = ["CPUExecutionProvider"]
         self.encoder = ort.InferenceSession(encoder_path, providers=providers)
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
     def encode(self, src, src_mask):
+        """Прогоняет исходную последовательность через ONNX-кодер.
+                Входы:
+                    src (ndarray int64) - id токенов;
+                    src_mask (ndarray bool) - маска не-pad.
+                Выходы:
+                    memory (ndarray float32) - память кодера.
+        """
         return self.encoder.run(["memory"], {
             "src": src.astype(np.int64),
             "src_mask": src_mask
         })[0]
 
     def decode(self, tgt, memory, src_mask):
+        """Прогоняет целевую последовательность через ONNX-декодер с головкой.
+                Входы:
+                    tgt (ndarray int64) - id токенов;
+                    memory (ndarray float32) - память кодера;
+                    src_mask (ndarray bool) - маска.
+                Выходы:
+                    logits (ndarray float32) - logits по словарю.
+        """
         return self.decoder.run(["logits"], {
             "tgt": tgt.astype(np.int64),
             "memory": memory.astype(np.float32),
@@ -104,7 +173,24 @@ class ONNXTransformer:
 
 
 def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=256):
+    """Beam search по ONNX-модели: токенизирует вход, генерирует перевод и декодирует лучший луч.
+            Входы:
+                model (ONNXTransformer) - модель;
+                tokenizer (AutoTokenizer) - токенизатор;
+                src (Tensor) - id входных токенов (1, S);
+                beam_size (int) - ширина луча;
+                max_len (int) - максимальная длина перевода.
+            Выходы:
+                translation (str) - итоговый перевод.
+    """
     def log_softmax(x, axis=-1):
+        """Лога-softmax по оси с вычитанием максимума для численной устойчивости.
+                Входы:
+                    x (ndarray) - тензор logits;
+                    axis (int) - ось применения (по умолчанию -1).
+                Выходы:
+                    result (ndarray) - логарифм softmax той же формы.
+        """
         x = x - np.max(x, axis=axis, keepdims=True)
         exp = np.exp(x)
         return np.log(exp / np.sum(exp, axis=axis, keepdims=True))
@@ -138,11 +224,23 @@ def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=256):
 
 @dp.message(CommandStart())
 async def start(message: Message):
+    """Хендлер команды /start: присылает пользователю подсказку.
+            Входы:
+                message (Message) - входящее сообщение.
+            Выходы:
+                None - ответ отправляется в чат.
+    """
     await message.answer("Отправь текст, и я переведу его.")
 
 
 @dp.message()
 async def translate(message: Message):
+    """Хендлер обычных сообщений: переводит текст ONNX-моделью; при ошибке переключает прокси и сообщает об ошибке.
+            Входы:
+                message (Message) - сообщение с текстом для перевода.
+            Выходы:
+                None - перевод (или текст ошибки) отправляется в чат.
+    """
     global proxy_manager
     text = message.text
     current_proxy = proxy_manager.get_current_proxy() if proxy_manager else None
@@ -164,6 +262,12 @@ async def translate(message: Message):
 
 
 async def main():
+    """Точка входа бота: загружает токенизатор и ONNX-модель, настраивает прокси и запускает long polling.
+            Входы:
+                None - настройки берутся из CONFIG.
+            Выходы:
+                None - бот работает до прерывания.
+    """
     print("This file is distributed under the open license AGPLv3, source code: https://github.com/cesslav/polyglot.")
 
     tokenizer = AutoTokenizer.from_pretrained("./tokenizer")

@@ -11,6 +11,12 @@ print(ds)
 
 
 def apply_inline_casing(text):
+    """Кодирует регистр текста специальными токенами: <|upall|> (все буквы), <|up|> (последовательность заглавных), <|cap|> (одиночная заглавная).
+            Входы:
+                text (str) - исходная строка.
+            Выходы:
+                result (str) - строка, где заглавные буквы заменены на нижний регистр с маркерами регистра.
+    """
     alpha_all = [c for c in text if c.isalpha()]
     if len(alpha_all) > 1 and all(c.isupper() for c in alpha_all):
         return "<|upall|> " + text.lower()
@@ -34,6 +40,12 @@ def apply_inline_casing(text):
 
 
 def restore_inline_casing(text):
+    """Обратное преобразование apply_inline_casing: восстанавливает исходный регистр по маркерам.
+            Входы:
+                text (str) - строка с токенами регистра.
+            Выходы:
+                result (str) - строка с восстановленным регистром.
+    """
     if text.startswith("<|upall|> "):
         return text[len("<|upall|> "):].upper()
 
@@ -58,6 +70,12 @@ def restore_inline_casing(text):
 
 
 def get_training_corpus(batch=10):
+    """Генератор корпуса для обучения токенизатора: порции оригинальных и переведённых текстов с закодированным регистром.
+            Входы:
+                batch (int) - размер порции записей из стримингового датасета ds.
+            Выходы:
+                chunk (list[str]) - список текстов (og_full_text / translated_text) с токенами регистра.
+    """
     for i in ds.iter(batch_size=batch):
         yield [apply_inline_casing(t) for t in i["og_full_text"]]
         yield [apply_inline_casing(t) for t in i["translated_text"]]

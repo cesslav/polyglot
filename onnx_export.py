@@ -31,25 +31,58 @@ _EMBEDDING_KEYWORDS = frozenset({"token_emb"})
 
 
 class EncoderWrapper(torch.nn.Module):
+    """Обёртка кодера для экспорта в ONNX: фиксирует сигнатуру (src, src_mask) -> memory.
+            Конструктор:
+                encoder (Encoder) - кодер модели Transformer.
+    """
+
     def __init__(self, encoder):
         super().__init__()
         self.encoder = encoder
 
     def forward(self, src: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
+        """Прогоняет исходную последовательность через кодер.
+                Входы:
+                    src (Tensor) - (batch, seq), id токенов;
+                    src_mask (Tensor) - булева маска не-pad.
+                Выходы:
+                    memory (Tensor) - (batch, seq, d_model), контекст кодера.
+        """
         return self.encoder(src, mask=src_mask)
 
 
 class DecoderWrapper(torch.nn.Module):
+    """Обёртка «декодер + логит-головка» для экспорта в ONNX: (tgt, memory, src_mask) -> logits.
+            Конструктор:
+                model (Transformer) - полная модель, из которой берутся decoder и to_logits.
+    """
+
     def __init__(self, model):
         super().__init__()
         self.decoder = model.decoder
         self.head = model.to_logits
 
     def forward(self, tgt: torch.Tensor, memory: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
+        """Декодирует целевую последовательность по памяти кодера и выдаёт logits.
+                Входы:
+                    tgt (Tensor) - (batch, tgt_seq), id токенов;
+                    memory (Tensor) - (batch, src_seq, d_model), память кодера;
+                    src_mask (Tensor) - булева маска исходного текста.
+                Выходы:
+                    logits (Tensor) - (batch, tgt_seq, vocab_size), logits по словарю.
+        """
         return self.head(self.decoder(tgt, memory, context_mask=src_mask))
 
 
 def export_fp32(model, config, save_dir):
+    """Экспортирует кодер и декодер модели в ONNX (FP32) с динамическими размерами batch и seq.
+            Входы:
+                model (Transformer) - обученная модель;
+                config (dict) - конфигурация (vocab_size, d_model);
+                save_dir (str) - каталог для сохранения onnx-файлов.
+            Выходы:
+                None - в save_dir появляются encoder_fp32.onnx и decoder_fp32.onnx.
+    """
     os.makedirs(save_dir, exist_ok=True)
     model.eval()
     model = model.to("cpu")
@@ -95,6 +128,12 @@ def export_fp32(model, config, save_dir):
 
 
 def classify_nodes(onnx_path):
+    """Группирует узлы ONNX-модели по ролям (attention/logits/embeddings/feedforward) по именам операций.
+            Входы:
+                onnx_path (str) - путь к onnx-модели.
+            Выходы:
+                groups (dict[str, list[str]]) - имена узлов в четырёх группах.
+    """
     model = onnx.load(onnx_path)
     groups = {"attention": [], "logits": [], "embeddings": [], "feedforward": []}
     for node in model.graph.node:
@@ -115,6 +154,15 @@ def classify_nodes(onnx_path):
 
 
 def quantize_int8(input_path, output_path, nodes_to_quantize, per_channel=PER_CHANNEL_INT8):
+    """Динамическая INT8-квантизация выбранного набора узлов ONNX-модели.
+            Входы:
+                input_path (str) - исходная onnx-модель;
+                output_path (str) - путь результата;
+                nodes_to_quantize (list[str]) - имена узлов для квантизации;
+                per_channel (bool) - per-channel квантизация весов.
+            Выходы:
+                None - квантованная модель сохраняется в output_path.
+    """
     print(f"INT8: квантизация {len(nodes_to_quantize)} узлов ({input_path})")
     quantize_dynamic(
         model_input=input_path,
@@ -127,6 +175,14 @@ def quantize_int8(input_path, output_path, nodes_to_quantize, per_channel=PER_CH
 
 
 def quantize_fp16(input_path, output_path, target_nodes):
+    """Переводит только указанные узлы ONNX-модели в half precision (FP16), остальные оставляет в FP32.
+            Входы:
+                input_path (str) - исходная onnx-модель;
+                output_path (str) - путь результата;
+                target_nodes (list[str]) - имена узлов, подлежащих переводу в FP16.
+            Выходы:
+                None - смешанная FP16/FP32 модель сохраняется в output_path.
+    """
     try:
         from onnxconverter_common import float16
     except ImportError as e:
@@ -147,6 +203,15 @@ def quantize_fp16(input_path, output_path, target_nodes):
 
 
 def apply_quantization_config(fp32_path, output_path, config, tmp_dir):
+    """Применяет смешанную квантизацию (INT8/FP16 по группам узлов) согласно конфигурации.
+            Входы:
+                fp32_path (str) - исходная FP32 onnx-модель;
+                output_path (str) - путь итогового файла;
+                config (dict[str, str]) - соответствие «группа узлов -> режим» (int8/fp16/fp32);
+                tmp_dir (str) - временный каталог.
+            Выходы:
+                None - результат сохраняется в output_path.
+    """
     groups = classify_nodes(fp32_path)
     current_path = fp32_path
 
@@ -169,6 +234,14 @@ def apply_quantization_config(fp32_path, output_path, config, tmp_dir):
 
 
 def save_model_config(save_dir, config, quant_config):
+    """Сохраняет model_config.json с метаданными модели (языки, версия, архитектура, схема квантизации).
+            Входы:
+                save_dir (str) - каталог сохранения;
+                config (dict) - архитектура модели;
+                quant_config (dict) - схема квантизации.
+            Выходы:
+                None - файл model_config.json записывается в save_dir.
+    """
     meta = {
         "input_language": SRC_LANG,
         "output_language": TGT_LANG,
@@ -190,6 +263,13 @@ def save_model_config(save_dir, config, quant_config):
 
 
 def load_model(checkpoint_path):
+    """Собирает модель Transformer по конфигурации из PyTorch-чекпоинта и загружает веса.
+            Входы:
+                checkpoint_path (str) - путь к файлу .pt.
+            Выходы:
+                model (Transformer) - модель с загруженными весами;
+                config (dict) - словарь конфигурации.
+    """
     checkpoint = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
     config = checkpoint["config"]
 

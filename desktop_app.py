@@ -68,6 +68,13 @@ QProgressBar::chunk {{ background-color: {COLOR_ACCENT}; border-radius: 3px; }}
 
 
 def accent_btn(text, small=False):
+    """Создаёт кнопку-акцент (зелёный заполненный стиль) основного действия.
+            Входы: 
+                text (str) - подпись; 
+                small (bool) - компактный размер.
+            Выходы: 
+                QPushButton - готовая к подключению кнопка.
+    """
     btn = QPushButton(text)
     h, fs = ("36px", "12px") if small else ("44px", "14px")
     btn.setStyleSheet(f"""
@@ -80,6 +87,14 @@ def accent_btn(text, small=False):
 
 
 def outline_btn(text, color=COLOR_ACCENT, small=False):
+    """Создаёт контурную кнопку (прозрачный фон, цветная рамка) для второстепенных действий.
+            Входы: 
+                text (str) - подпись; 
+                color (str) - цвет рамки/текста; 
+                small (bool) - компактный размер.
+            Выходы: 
+                QPushButton - готовая к подключению кнопка.
+    """
     btn = QPushButton(text)
     h = "36px" if small else "44px"
     btn.setStyleSheet(f"""
@@ -92,6 +107,12 @@ def outline_btn(text, color=COLOR_ACCENT, small=False):
 
 
 def delete_btn(text):
+    """Создаёт красную кнопку удаления.
+            Входы: 
+                text (str) - подпись.
+            Выходы: 
+                QPushButton - готовая к подключению кнопка.
+    """
     btn = QPushButton(text)
     btn.setStyleSheet(f"""
         QPushButton {{ background-color: #8B0000; color: #ffffff; border: none; border-radius: 8px; padding: 0 14px; min-height: 32px; font-weight: bold; font-size: 13px; }}
@@ -102,6 +123,12 @@ def delete_btn(text):
 
 
 def nav_btn(text):
+    """Создаёт переключаемую (checkable) кнопку нижней навигации.
+            Входы: 
+                text (str) - подпись вкладки.
+            Выходы: 
+                QPushButton - checkable-кнопка навигации.
+    """
     btn = QPushButton(text)
     btn.setCheckable(True)
     btn.setStyleSheet(f"""
@@ -113,12 +140,22 @@ def nav_btn(text):
 
 
 def neon_card():
+    """Создаёт рамку-«карточку» в фирменном тёмно-зелёном стиле.
+            Входы: 
+                None.
+            Выходы: 
+                QFrame - стилизованная карточка.
+    """
     frame = QFrame()
     frame.setStyleSheet(f"QFrame {{ background-color: {COLOR_SURFACE}; border: 1.5px solid {COLOR_BORDER}; border-radius: 10px; }}")
     return frame
 
 
 class RoundedPanel(QFrame):
+    """Панель со скруглёнными углами: применяет маску при каждом изменении размера.
+            Конструктор: 
+                parent (QWidget|None) - родительский виджет.
+    """
     STYLE = f"RoundedPanel {{ background-color: {COLOR_SURFACE}; border: 1.5px solid {COLOR_BORDER}; border-radius: 10px; }}"
 
     def __init__(self, parent=None):
@@ -127,6 +164,12 @@ class RoundedPanel(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
 
     def resizeEvent(self, event):
+        """Пересчитывает маску скругления при изменении размера панели.
+                Входы: 
+                    event (QResizeEvent) - событие изменения размера.
+                Выходы: 
+                    None - маска виджета обновляется.
+        """
         super().resizeEvent(event)
         from PyQt5.QtGui import QPainterPath, QRegion
         path = QPainterPath()
@@ -135,6 +178,12 @@ class RoundedPanel(QFrame):
 
 
 def text_edit_transparent():
+    """Создаёт прозрачное многострочное поле ввода в фирменном стиле.
+            Входы:
+                None.
+            Выходы:
+                QTextEdit - готовое поле ввода.
+    """
     te = QTextEdit()
     te.setFrameShape(QFrame.NoFrame)
     te.setStyleSheet(f"""
@@ -145,6 +194,10 @@ def text_edit_transparent():
 
 
 class UnigramTokenizer:
+    """Собственный униграмм-токенизатор на базе tokenizer.json: пре-токенизация по пробелам + Viterbi-декомпозиция в токены словаря.
+            Конструктор:
+                model_dir (Path) - каталог модели, внутри которого лежит tokenizer/tokenizer.json. Бросает FileNotFoundError, если файла нет.
+    """
     MAX_TOKEN_LEN = 32
 
     def __init__(self, model_dir: Path):
@@ -172,6 +225,12 @@ class UnigramTokenizer:
         self._token_to_id = {entry[0]: i for i, entry in enumerate(vocab_arr)}
 
     def _viterbi(self, text: str) -> list:
+        """Разбивает препре-токен на последовательность токенов словаря, максимизируя суммарную log-вероятность (Viterbi).
+                Входы:
+                    text (str) - препре-токен (не длиннее разумного предела).
+                Выходы:
+                    list[str] - найденная последовательность токенов; при отсутствии разбивки - список символов.
+        """
         n = len(text)
         if n == 0: return []
         NEG_INF = float("-inf")
@@ -198,12 +257,25 @@ class UnigramTokenizer:
         return result
 
     def _pretokenize(self, text: str) -> list:
+        """Препре-токенизация по схеме Metaspace: пробелы заменяются на маркер ▁, строка режется на слова.
+                Входы:
+                    text (str) - исходная строка.
+                Выходы:
+                    list[str] - слова с префиксом ▁.
+        """
         if not text: return []
         raw = "▁" + text.replace(" ", "▁")
         parts = raw.split("▁")
         return ["▁" + p for p in parts if p]
 
     def encode(self, text: str, max_length: int = 256) -> np.ndarray:
+        """Кодирует текст в последовательность id токенов [bos, ..., eos] с padding до max_length.
+                Входы:
+                    text (str) - строка для токенизации;
+                    max_length (int) - итоговая длина массива.
+                Выходы:
+                    ndarray int64 (max_length,) - id токенов с pad в хвосте.
+        """
         tokens = [self.bos_id]
         for piece in self._pretokenize(text):
             for sub in self._viterbi(piece):
@@ -214,6 +286,13 @@ class UnigramTokenizer:
         return out
 
     def decode(self, ids, skip_special: bool = True) -> str:
+        """Декодирует последовательность id в текст: маркер ▁ превращается в пробел.
+                Входы:
+                    ids - последовательность id токенов;
+                    skip_special (bool) - пропускать ли bos/eos/pad.
+                Выходы:
+                    str - декодированный текст.
+        """
         skip = {self.bos_id, self.eos_id, self.pad_id} if skip_special else set()
         sb = []
         for tid in ids:
@@ -224,6 +303,10 @@ class UnigramTokenizer:
 
 
 class OnnxTransformer:
+    """Обёртка над ONNX-сессиями кодера и декодера модели из локального каталога.
+            Конструктор:
+                model_dir (Path) - каталог с encoder.onnx и decoder.onnx.
+    """
     def __init__(self, model_dir: Path):
         if not ONNX_AVAILABLE:
             raise ImportError("onnxruntime не установлен. pip install onnxruntime")
@@ -236,12 +319,27 @@ class OnnxTransformer:
         self.decoder = ort.InferenceSession(dec, providers=providers)
 
     def encode(self, src: np.ndarray, src_mask: np.ndarray) -> np.ndarray:
+        """Прогоняет исходную последовательность через ONNX-кодер.
+                Входы:
+                    src (ndarray int64) - id токенов (1, seq);
+                    src_mask (ndarray bool) - маска не-pad.
+                Выходы:
+                    ndarray float32 - память кодера.
+        """
         return self.encoder.run(["memory"], {
             "src": src.astype(np.int64),
             "src_mask": src_mask
         })[0]
 
     def decode(self, tgt: np.ndarray, memory: np.ndarray, src_mask: np.ndarray) -> np.ndarray:
+        """Прогоняет целевую последовательность через ONNX-декодер с головкой.
+                Входы:
+                    tgt (ndarray int64) - id токенов;
+                    memory (ndarray float32) - память кодера;
+                    src_mask (ndarray bool) - маска.
+                Выходы:
+                    ndarray float32 - logits по словарю.
+        """
         return self.decoder.run(["logits"], {
             "tgt": tgt.astype(np.int64),
             "memory": memory.astype(np.float32),
@@ -250,6 +348,16 @@ class OnnxTransformer:
 
 
 def greedy_search(model, tokenizer, src_tokens, max_len=MAX_OUTPUT_LEN, on_token=None):
+    """Жадная генерация перевода по одному токену с обратным вызовом на каждом шаге.
+            Входы:
+                model (OnnxTransformer) - модель;
+                tokenizer (UnigramTokenizer) - токенизатор;
+                src_tokens (ndarray int64) - id входных токенов;
+                max_len (int) - максимальная длина вывода;
+                on_token (callable|None) - callback(tokens), вызывается после каждого нового токена.
+            Выходы:
+                ndarray int64 - последовательность [bos, ..., eos].
+    """
     bos, eos = tokenizer.bos_id, tokenizer.eos_id
     src_mask = (src_tokens != tokenizer.pad_id)[np.newaxis, :]
     memory = model.encode(src_tokens[np.newaxis, :], src_mask)
@@ -265,6 +373,12 @@ def greedy_search(model, tokenizer, src_tokens, max_len=MAX_OUTPUT_LEN, on_token
 
 
 def read_model_config(model_dir: Path) -> dict:
+    """Читает model_config.json каталога модели.
+            Входы:
+                model_dir (Path) - каталог модели.
+            Выходы:
+                dict - конфигурация; пустой dict, если файла нет или он повреждён.
+    """
     config_path = model_dir / "model_config.json"
     if config_path.exists():
         try:
@@ -275,6 +389,12 @@ def read_model_config(model_dir: Path) -> dict:
 
 
 def make_display_name(stem: str) -> str:
+    """Отображаемое имя модели: «SRC -> TGT» из model_config.json или разбор имени каталога (ru-en-...).
+            Входы:
+                stem (str) - имя каталога модели (пустая строка - корень MODELS_DIR).
+            Выходы:
+                str - имя для выпадающего списка.
+    """
     model_dir = MODELS_DIR / stem if stem else MODELS_DIR
     cfg = read_model_config(model_dir)
 
@@ -296,10 +416,20 @@ def make_display_name(stem: str) -> str:
 
 
 class ModelDownloadManager:
+    """Сетевой менеджер загрузки моделей: ping сервера, список моделей, скачивание и распаковка архивов.
+            Конструктор:
+                base_url (str) - адрес сервера раздачи моделей.
+    """
     base_url = DEFAULT_SERVER_URL
 
     @classmethod
     def ping(cls, url=None) -> bool:
+        """Проверяет доступность сервера по эндпоинту /ping.
+                Входы:
+                    url (str|None) - адрес сервера; None - использовать base_url.
+                Выходы:
+                    bool - True, если сервер ответил "available", иначе - False.
+        """
         try:
             r = requests.get(f"{url or cls.base_url}/ping", timeout=10)
             return r.status_code == 200 and r.json().get("answer") == "available"
@@ -308,12 +438,26 @@ class ModelDownloadManager:
 
     @classmethod
     def fetch_model_list(cls) -> list:
+        """Запрашивает у сервера список доступных моделей.
+                Входы:
+                    None - адрес берётся из base_url.
+                Выходы:
+                    list - JSON-массив описаний моделей (name, file, size_mb, ...).
+        """
         r = requests.get(f"{cls.base_url}/models", timeout=15)
         r.raise_for_status()
         return r.json()
 
     @classmethod
     def download_model(cls, file: str, dest_dir: Path, on_progress=None):
+        """Скачивает zip-архив модели, распаковывает его в каталог и удаляет архив.
+                Входы:
+                    file (str) - имя архива на сервере;
+                    dest_dir (Path) - каталог установки;
+                    on_progress (callable|None) - callback(pct, installing) для прогресс-бара.
+                Выходы:
+                    Path - каталог установленной модели.
+        """
         r = requests.get(f"{cls.base_url}/models/{file}", stream=True, timeout=60)
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
@@ -337,6 +481,16 @@ class ModelDownloadManager:
 
 
 class InferenceWorker(QThread):
+    """Фоновый тред генерации перевода: жадный поиск с посимвольными сигналами частичного результата.
+            Сигналы:
+                partial_result (str) - текущий частичный перевод;
+                finished (str, float, int) - текст, время, число токенов;
+                error (str) - текст ошибки.
+            Конструктор:
+                model (OnnxTransformer) - модель;
+                tokenizer (UnigramTokenizer) - токенизатор;
+                text (str) - переводимый текст.
+    """
     partial_result = pyqtSignal(str)
     finished = pyqtSignal(str, float, int)
     error = pyqtSignal(str)
@@ -348,6 +502,12 @@ class InferenceWorker(QThread):
         self.text = text
 
     def run(self):
+        """Выполняет инференс: кодирование, greedy_search с callback и отправка результата/ошибки по сигналам.
+                Входы:
+                    None - данные берутся из полей объекта.
+                Выходы:
+                    None - результат передаётся сигналами partial_result/finished/error.
+        """
         try:
             tok = self.tokenizer
             mdl = self.model
@@ -360,6 +520,12 @@ class InferenceWorker(QThread):
             token_count = [0]
 
             def on_tok(tokens):
+                """Callback greedy_search: считает токены и шлёт частичный перевод в сигнал.
+                        Входы:
+                            tokens (ndarray int64) - текущая накопленная последовательность токенов.
+                        Выходы:
+                            None - частичный перевод эмитится сигналом partial_result.
+                """
                 token_count[0] += 1
                 self.partial_result.emit(tok.decode(tokens))
 
@@ -371,6 +537,15 @@ class InferenceWorker(QThread):
 
 
 class DownloadWorker(QThread):
+    """Фоновый тред скачивания и установки модели с сигналами прогресса.
+            Сигналы:
+                progress (str, int, bool) - файл, процент, флаг установки;
+                finished (str) - имя файла;
+                error (str, str) - файл и текст ошибки.
+            Конструктор:
+                file (str) - имя архива;
+                dest_dir (Path) - каталог установки.
+    """
     progress = pyqtSignal(str, int, bool)
     finished = pyqtSignal(str)
     error = pyqtSignal(str, str)
@@ -381,6 +556,12 @@ class DownloadWorker(QThread):
         self.dest_dir = dest_dir
 
     def run(self):
+        """Скачивает модель в фоновом потоке, транслируя прогресс в сигнал.
+                Входы:
+                    None - данные берутся из полей объекта.
+                Выходы:
+                    None - результат передаётся сигналами progress/finished/error.
+        """
         try:
             ModelDownloadManager.download_model(
                 self.file, self.dest_dir,
@@ -392,15 +573,32 @@ class DownloadWorker(QThread):
 
 
 class FetchListWorker(QThread):
+    """Фоновый тред получения списка моделей с сервера.
+            Сигналы:
+                result (list) - список моделей;
+                error (str) - текст ошибки.
+    """
     result = pyqtSignal(list)
     error = pyqtSignal(str)
 
     def run(self):
+        """Запрашивает список моделей и передаёт его по сигналам result/error.
+                Входы:
+                    None.
+                Выходы:
+                    None - результат передаётся сигналами.
+        """
         try:    self.result.emit(ModelDownloadManager.fetch_model_list())
         except Exception as e: self.error.emit(str(e))
 
 
 class PingWorker(QThread):
+    """Фоновый тред проверки доступности сервера.
+            Сигналы:
+                result (bool, str) - доступность и адрес.
+            Конструктор:
+                url (str) - проверяемый адрес сервера.
+    """
     result = pyqtSignal(bool, str)
 
     def __init__(self, url: str):
@@ -408,10 +606,25 @@ class PingWorker(QThread):
         self.url = url
 
     def run(self):
+        """Пингует адрес и передаёт результат по сигналу result.
+                Входы:
+                    None.
+                Выходы:
+                    None - (bool, url) передаётся сигналом.
+        """
         self.result.emit(ModelDownloadManager.ping(self.url), self.url)
 
 
 class ModelCard(QFrame):
+    """Карточка модели в списке загрузок: имя, размер, кнопки «Скачать»/«Удалить» и прогресс-бар.
+            Сигналы:
+                download_clicked (dict) - info модели при скачивании;
+                delete_clicked (dict) - info при удалении.
+            Конструктор:
+                model_info (dict) - данные модели;
+                installed (bool) - установлена ли уже;
+                parent (QWidget|None).
+    """
     download_clicked = pyqtSignal(dict)
     delete_clicked = pyqtSignal(dict)
 
@@ -428,11 +641,17 @@ class ModelCard(QFrame):
         self._build()
 
     def _build(self):
+        """Собирает внутреннюю раскладку карточки: имя, размер, прогресс, кнопки.
+                Входы:
+                    None.
+                Выходы:
+                    None - виджеты создаются in-place.
+        """
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(10)
 
-        name_lbl = QLabel(self.model_info.get("name", "—"))
+        name_lbl = QLabel(self.model_info.get("name", "-"))
         name_lbl.setStyleSheet(f"color:{COLOR_TEXT}; font-weight:bold; font-size:13px;")
         size_lbl = QLabel(f"{self.model_info.get('size_mb','?')} МБ")
         size_lbl.setStyleSheet(f"color:{COLOR_MUTED}; font-size:11px;")
@@ -479,6 +698,12 @@ class ModelCard(QFrame):
         self._refresh()
 
     def _refresh(self):
+        """Переключает видимость кнопок в зависимости от статуса установки.
+                Входы:
+                    None.
+                Выходы:
+                    None - карточка обновляет отображение.
+        """
         if self.installed:
             self.dl_btn.setVisible(False)
             self.del_btn.setVisible(True)
@@ -489,6 +714,13 @@ class ModelCard(QFrame):
         self.pb_lbl.setVisible(False)
 
     def set_progress(self, pct: int, installing: bool):
+        """Показывает прогресс-бар загрузки/установки модели.
+                Входы:
+                    pct (int) - процент загрузки;
+                    installing (bool) - True, если идёт распаковка (индетерминированный режим).
+                Выходы:
+                    None.
+        """
         self.dl_btn.setVisible(False)
         self.del_btn.setVisible(False)
         self.pb.setVisible(True)
@@ -502,17 +734,33 @@ class ModelCard(QFrame):
             self.pb_lbl.setText(f"{pct}%")
 
     def mark_installed(self):
+        """Отмечает модель как установленную (100%, кнопка «Удалить»).
+            Входы:
+                None.
+            Выходы:
+                None.
+        """
         self.installed = True
         self.pb.setRange(0, 100)
         self.pb.setValue(100)
         self._refresh()
 
     def mark_deleted(self):
+        """Отмечает модель как отсутствующую (кнопка «Скачать»).
+            Входы:
+                None.
+            Выходы:
+                None.
+        """
         self.installed = False
         self._refresh()
 
 
 class TranslateScreen(QWidget):
+    """Экран перевода: поле ввода, поле результата, выбор языкового пакета и кнопка «Перевести».
+            Конструктор:
+                None - создаёт UI и загружает первую найденную модель.
+    """
     def __init__(self):
         super().__init__()
         self.model: OnnxTransformer | None = None
@@ -522,6 +770,12 @@ class TranslateScreen(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
+        """Собирает раскладку экрана перевода: панели «Исходный текст»/«Перевод», кнопки копирования, выбор модели.
+                Входы:
+                    None.
+                Выходы:
+                    None - виджеты создаются in-place.
+        """
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 16, 20, 12)
         root.setSpacing(10)
@@ -622,6 +876,12 @@ class TranslateScreen(QWidget):
         self.refresh_models()
 
     def refresh_models(self):
+        """Перечитывает каталог моделей, обновляет выпадающий список и загружает первую модель.
+                Входы:
+                    None.
+                Выходы:
+                    None - combo и активная модель обновляются.
+        """
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self._model_dirs = []
@@ -642,15 +902,33 @@ class TranslateScreen(QWidget):
 
     @staticmethod
     def _is_model_dir(d: Path) -> bool:
+        """Проверяет, что каталог является установленной моделью (encoder, decoder, tokenizer).
+                Входы:
+                    d (Path) - проверяемый каталог.
+                Выходы:
+                    bool - True, если все обязательные файлы на месте.
+        """
         return ((d / "encoder.onnx").exists() and
                 (d / "decoder.onnx").exists() and
                 (d / "tokenizer" / "tokenizer.json").exists())
 
     def _on_model_changed(self, idx: int):
+        """Реагирует на смену выбора модели в combo-боксе: загружает выбранную.
+                Входы:
+                    idx (int) - индекс в списке каталогов моделей.
+                Выходы:
+                    None.
+        """
         if 0 <= idx < len(self._model_dirs):
             self._load_model(self._model_dirs[idx])
 
     def _load_model(self, path: Path):
+        """Загружает токенизатор и ONNX-модель из каталога; при ошибке показывает статус.
+                Входы:
+                    path (Path) - каталог модели.
+                Выходы:
+                    None - self.tokenizer/self.model обновляются.
+        """
         self.translate_btn.setEnabled(False)
         self.status_lbl.setText("Загрузка…")
         try:
@@ -662,6 +940,12 @@ class TranslateScreen(QWidget):
             self.status_lbl.setText(f"Ошибка: {e}")
 
     def _on_input_changed(self):
+        """Обработчик ввода: обрезка до MAX_INPUT_CHARS, счётчик символов с цветовой индикацией.
+                Входы:
+                    None - текст берётся из поля ввода.
+                Выходы:
+                    None - поле ввода и счётчик обновляются.
+        """
         text = self.input_edit.toPlainText()
         if len(text) > MAX_INPUT_CHARS:
             cursor = self.input_edit.textCursor()
@@ -684,6 +968,12 @@ class TranslateScreen(QWidget):
             self.output_edit.clear()
 
     def _do_translate(self):
+        """Запускает фоновый тред перевода для текущего текста.
+                Входы:
+                    None - текст берётся из поля ввода.
+                Выходы:
+                    None - стартует InferenceWorker, UI блокируется до завершения.
+        """
         if not self.model or not self.tokenizer:
             return
         text = self.input_edit.toPlainText().strip()
@@ -701,22 +991,48 @@ class TranslateScreen(QWidget):
         self.worker.start()
 
     def _on_done(self, text: str, elapsed: float, tokens: int):
+        """Финализация перевода: выводит результат и скорость (tok/s), возвращает кнопку в работу.
+                Входы:
+                    text (str) - полный перевод;
+                    elapsed (float) - время, с;
+                    tokens (int) - число токенов.
+                Выходы:
+                    None.
+        """
         self.output_edit.setPlainText(text)
         tok_s = tokens / elapsed if elapsed > 0 else 0
         self.status_lbl.setText(f"{tok_s:.1f} tok/s")
         self.translate_btn.setEnabled(True)
 
     def _on_err(self, msg: str):
+        """Обработчик ошибки инференса: показывает сообщение и возвращает кнопку в работу.
+                Входы:
+                    msg (str) - текст ошибки.
+                Выходы:
+                    None.
+        """
         self.output_edit.setPlainText(f"⚠ Ошибка: {msg}")
         self.status_lbl.setText("")
         self.translate_btn.setEnabled(True)
 
     @staticmethod
     def _copy(text: str):
+        """Копирует текст в системный буфер обмена.
+                Входы:
+                    text (str) - копируемый текст (пустой текст игнорируется).
+                Выходы:
+                    None.
+        """
         if text: QApplication.clipboard().setText(text)
 
 
 class DownloadsScreen(QWidget):
+    """Экран загрузок: статус соединения, список моделей с кнопками скачивания/удаления, настройка адреса сервера.
+            Сигналы:
+                models_changed - состав моделей изменился (пересчитать экран перевода).
+            Конструктор:
+                None.
+    """
     models_changed = pyqtSignal()
 
     def __init__(self):
@@ -726,6 +1042,12 @@ class DownloadsScreen(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
+        """Собирает раскладку экрана загрузок: карточка соединения, список, блок адреса сервера.
+                Входы:
+                    None.
+                Выходы:
+                    None - виджеты создаются in-place.
+        """
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 16, 20, 16)
         root.setSpacing(10)
@@ -785,6 +1107,12 @@ class DownloadsScreen(QWidget):
         root.addWidget(sv_card)
 
     def load(self):
+        """Перезагружает экран: показывает установленные модели и запрашивает список с сервера.
+                Входы:
+                    None.
+                Выходы:
+                    None - список карточек перестраивается.
+        """
         self.conn_lbl.setText("Подключение к серверу…")
         self.conn_card.setStyleSheet(neon_card().styleSheet())
         self.conn_lbl.setStyleSheet(f"color:{COLOR_ACCENT}; border:none;")
@@ -806,11 +1134,23 @@ class DownloadsScreen(QWidget):
         worker.start()
 
     def _installed_stems(self) -> list:
+        """Имена установленных моделей (каталоги с encoder.onnx).
+                Входы:
+                    None.
+                Выходы:
+                    list[str] - имена каталогов в MODELS_DIR.
+        """
         if not MODELS_DIR.exists(): return []
         return [d.name for d in sorted(MODELS_DIR.iterdir())
                 if d.is_dir() and (d / "encoder.onnx").exists()]
 
     def _on_server_list(self, models: list):
+        """Обрабатывает полученный список сервера: добавляет карточки не установленных моделей.
+                Входы:
+                    models (list) - JSON-массив описаний моделей.
+                Выходы:
+                    None.
+        """
         self.conn_card.setVisible(False)
         installed = set(self._installed_stems())
         for m in models:
@@ -822,17 +1162,36 @@ class DownloadsScreen(QWidget):
                 self._add_card(info, installed=False)
 
     def _on_server_error(self, msg: str):
+        """Показывает карточку ошибки подключения к серверу.
+                Входы:
+                    msg (str) - текст ошибки (не отображается).
+                Выходы:
+                    None.
+        """
         self.conn_lbl.setText("Ошибка подключения. Проверьте интернет или адрес сервера.")
         self.conn_card.setStyleSheet(f"QFrame {{ background-color:#1A0A00; border:1.5px solid {COLOR_ORANGE}; border-radius:10px; }}")
         self.conn_lbl.setStyleSheet(f"color:{COLOR_ORANGE}; border:none;")
 
     def _clear_list(self):
+        """Очищает список карточек моделей.
+                Входы:
+                    None.
+                Выходы:
+                    None.
+        """
         self._cards.clear()
         while self.list_layout.count() > 1:
             item = self.list_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
 
     def _add_card(self, info: dict, installed: bool):
+        """Создаёт и добавляет карточку модели в список.
+                Входы:
+                    info (dict) - данные модели;
+                    installed (bool) - установлена ли.
+                Выходы:
+                    None.
+        """
         card = ModelCard(info, installed)
         card.download_clicked.connect(self._start_download)
         card.delete_clicked.connect(self._delete_model)
@@ -840,6 +1199,12 @@ class DownloadsScreen(QWidget):
         self.list_layout.insertWidget(self.list_layout.count() - 1, card)
 
     def _start_download(self, info: dict):
+        """Запускает фоновое скачивание модели (повторный запуск для одного файла игнорируется).
+                Входы:
+                    info (dict) - данные модели, включая file.
+                Выходы:
+                    None - стартует DownloadWorker.
+        """
         file = info["file"]
         if file in self._workers: return
         if card := self._cards.get(file): card.set_progress(0, False)
@@ -851,19 +1216,46 @@ class DownloadsScreen(QWidget):
         worker.start()
 
     def _on_progress(self, file, pct, installing):
+        """Передает прогресс скачивания в карточку модели.
+                Входы:
+                    file (str) - имя архива;
+                    pct (int) - процент;
+                    installing (bool) - режим распаковки.
+                Выходы:
+                    None.
+        """
         if card := self._cards.get(file): card.set_progress(pct, installing)
 
     def _on_done(self, file: str):
+        """Завершение скачивания: помечает карточку установленной, уведомляет экран перевода.
+                Входы:
+                    file (str) - имя архива.
+                Выходы:
+                    None.
+        """
         self._workers.pop(file, None)
         if card := self._cards.get(file): card.mark_installed()
         self.models_changed.emit()
 
     def _on_dl_error(self, file: str, msg: str):
+        """Ошибка скачивания: сбрасывает карточку и показывает диалог с причиной.
+                Входы:
+                    file (str) - имя архива;
+                    msg (str) - текст ошибки.
+                Выходы:
+                    None.
+        """
         self._workers.pop(file, None)
         if card := self._cards.get(file): card.mark_deleted()
         QMessageBox.warning(self, "Ошибка загрузки", f"Не удалось загрузить {file}:\n{msg}")
 
     def _delete_model(self, info: dict):
+        """Удаляет установленную модель после подтверждения (рmtree каталога).
+                Входы:
+                    info (dict) - данные модели.
+                Выходы:
+                    None - каталог модели удаляется, карточка сбрасывается.
+        """
         stem = info["file"].removesuffix(".zip")
         if QMessageBox.question(
             self, "Удалить", f"Удалить «{info['name']}»?",
@@ -876,6 +1268,12 @@ class DownloadsScreen(QWidget):
         self.models_changed.emit()
 
     def _on_confirm_url(self):
+        """Проверяет введённый адрес сервера (ping в фоне) перед сохранением.
+                Входы:
+                    None - адрес берётся из поля ввода.
+                Выходы:
+                    None - стартует PingWorker.
+        """
         raw = self.url_edit.text().strip().rstrip("/")
         if not raw: return
         if not raw.startswith("http"): raw = f"http://{raw}"
@@ -888,6 +1286,13 @@ class DownloadsScreen(QWidget):
         w.start()
 
     def _on_ping(self, ok: bool, url: str):
+        """Реакция на ping: при успехе обновляет адрес сервера и перечитывает список, иначе - предупреждение.
+                Входы:
+                    ok (bool) - доступен ли сервер;
+                    url (str) - проверенный адрес.
+                Выходы:
+                    None.
+        """
         if ok:
             ModelDownloadManager.base_url = url
             self.url_edit.clear()
@@ -899,6 +1304,12 @@ class DownloadsScreen(QWidget):
             self.conn_card.setVisible(False)
 
     def _on_reset_url(self):
+        """Сбрасывает адрес сервера загрузок к значению по умолчанию.
+                Входы:
+                    None.
+                Выходы:
+                    None - base_url и поле ввода возвращаются к DEFAULT_SERVER_URL.
+        """
         ModelDownloadManager.base_url = DEFAULT_SERVER_URL
         self.url_edit.clear()
         self.url_edit.setPlaceholderText(DEFAULT_SERVER_URL)
@@ -906,11 +1317,21 @@ class DownloadsScreen(QWidget):
 
 
 class AboutScreen(QWidget):
+    """Экран «О проекте»: описание платформы, ссылки для пользователей и разработчиков, лицензия.
+            Конструктор:
+                None - создаёт UI.
+    """
     def __init__(self):
         super().__init__()
         self._setup_ui()
 
     def _setup_ui(self):
+        """Собирает раскладку экрана «О проекте» со скроллабельным содержимым.
+                Входы:
+                    None.
+                Выходы:
+                    None - виджеты создаются in-place.
+        """
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 16, 20, 16)
         root.setSpacing(12)
@@ -929,7 +1350,7 @@ class AboutScreen(QWidget):
         dc = QVBoxLayout(desc_card)
         dc.setContentsMargins(14, 14, 14, 14)
         desc = QLabel(
-            '"Полиглот" — это open-source платформа для перевода, которая превращает пользователей в соавторов '
+            '"Полиглот" - это open-source платформа для перевода, которая превращает пользователей в соавторов '
             'продукта. В отличие от закрытых решений, таких как Google Translate, проект позволяет создавать и '
             'адаптировать перевод под конкретные задачи, формируя экосистему языковых решений. За счёт '
             'open-source модели "Полиглот" имеет потенциал масштабироваться через сообщество и стать '
@@ -941,6 +1362,13 @@ class AboutScreen(QWidget):
         layout.addWidget(desc_card)
 
         def link_section(title, links):
+            """Возвращает карточку с заголовком и кнопками-ссылками (открывают URL в браузере).
+                    Входы:
+                        title (str) - заголовок секции;
+                        links (list[(str, str)]) - пары «подпись, url».
+                    Выходы:
+                        QFrame - собранная карточка.
+            """
             card = neon_card()
             cl = QVBoxLayout(card)
             cl.setContentsMargins(14, 12, 14, 12)
@@ -976,6 +1404,10 @@ class AboutScreen(QWidget):
 
 
 class Header(QWidget):
+    """Верхняя панель окна: логотип (polylogo.png или текстовая заглушка).
+            Конструктор:
+                None - создаёт UI фиксированной высоты 108 px.
+    """
     def __init__(self):
         super().__init__()
         self.setFixedHeight(108)
@@ -1002,6 +1434,12 @@ class Header(QWidget):
 
 
 class NavBar(QWidget):
+    """Нижняя навигационная панель с тремя вкладками: «Перевод», «Загрузки», «О проекте».
+            Сигналы:
+                tab_changed (int) - индекс выбранной вкладки.
+            Конструктор:
+                None - создаёт UI.
+    """
     tab_changed = pyqtSignal(int)
 
     def __init__(self):
@@ -1019,12 +1457,22 @@ class NavBar(QWidget):
         self._btns[0].setChecked(True)
 
     def _click(self, idx: int):
+        """Активирует вкладку idx и сообщает о смене сигналами.
+                Входы:
+                    idx (int) - индекс вкладки.
+                Выходы:
+                    None - эмитится tab_changed(idx).
+        """
         for i, btn in enumerate(self._btns):
             btn.setChecked(i == idx)
         self.tab_changed.emit(idx)
 
 
 class MainWindow(QMainWindow):
+    """Главное окно приложения: шапка, три экрана в QStackedWidget и навигация; синхронизация списка моделей.
+            Конструктор:
+                None - создаёт все экраны и связывает сигналы.
+    """
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Полиглот")
@@ -1060,16 +1508,28 @@ class MainWindow(QMainWindow):
         self.downloads_screen.models_changed.connect(self.translate_screen.refresh_models)
 
     def _on_tab(self, idx: int):
+        """Переключает активный экран; при переходе на «Загрузки» перечитывает список моделей.
+                Входы:
+                    idx (int) - индекс экрана.
+                Выходы:
+                    None.
+        """
         self.stack.setCurrentIndex(idx)
         if idx == 1:
             self.downloads_screen.load()
 
 
 def main():
+    """Точка входа приложения: инициализация QApplication, стилизация, запуск главного окна.
+            Входы:
+                None.
+            Выходы:
+                None - приложение работает до закрытия окна (sys.exit).
+    """
     print("This file is distributed under the open license AGPLv3, "
           "source code: https://github.com/cesslav/polyglot.")
     if not ONNX_AVAILABLE:
-        print("ВНИМАНИЕ: onnxruntime не найден — перевод недоступен.")
+        print("ВНИМАНИЕ: onnxruntime не найден - перевод недоступен.")
         print("Установите: pip install onnxruntime")
 
     app = QApplication(sys.argv)

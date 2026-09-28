@@ -21,7 +21,20 @@ from collections import deque
 
 
 def get_transformer_scheduler(optimizer, warmup_steps):
+    """Создаёт расписание learning rate: линейный warmup до warmup_steps, затем степенной спад.
+            Входы:
+                optimizer (Optimizer) - оптимизатор;
+                warmup_steps (int) - количество шагов warmup.
+            Выходы:
+                scheduler (LambdaLR) - расписание для оптимизатора.
+    """
     def lr_lambda(step):
+        """Коэффициент lr на шаге: рост step/warmup в warmup, далее (warmup/step)^0.65.
+                Входы:
+                    step (int) - номер шага.
+                Выходы:
+                    factor (float) - множитель к базовой lr.
+        """
         step = max(step, 1)
         if step < warmup_steps:
             return step / warmup_steps
@@ -30,6 +43,15 @@ def get_transformer_scheduler(optimizer, warmup_steps):
 
 
 def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
+    """Формирует группы параметров с послойным затуханием lr (layer-wise LR decay) и разделением decay/no_decay.
+            Входы:
+                model (Transformer) - модель;
+                base_lr (float) - базовая lr для самого верхнего слоя;
+                decay (float) - множитель затухания lr на слой вниз;
+                weight_decay (float) - весовая стабилизация.
+            Выходы:
+                param_groups (list[dict]) - param_groups для оптимизатора (params, lr, weight_decay).
+    """
     encoder_layers = len(model.encoder.layers)
     decoder_layers = len(model.decoder.layers)
     max_depth = encoder_layers + decoder_layers + 1
@@ -74,6 +96,12 @@ def get_transformer_lrd(model, base_lr=1e-4, decay=0.9, weight_decay=0.01):
 
 
 def init_weights(m):
+    """Инициализация весов модулей: xavier_uniform для Linear, нормальное (std=0.02) для Embedding.
+            Входы:
+                m (nn.Module) - модуль, обработанный моделью через apply().
+            Выходы:
+                None - веса модуля переинициализируются in-place.
+    """
     if isinstance(m, nn.Linear):
         torch.nn.init.xavier_uniform_(m.weight)
         if m.bias is not None:
@@ -83,6 +111,18 @@ def init_weights(m):
 
 
 def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN", progress=0):
+    """Сохраняет контрольную точку (модель, оптимизатор, расписание, метрики, конфиг); каждые 5-е — дубликат в cold_saves.
+            Входы:
+                transformer (DDP|Transformer) - модель;
+                epoch (int) - номер эпохи;
+                optimizer (Optimizer) - оптимизатор;
+                scheduler (LambdaLR) - расписание;
+                train_loss (float) - потеря обучения;
+                val_loss (float|str) - потеря валидации;
+                progress (float) - прогресс по эпохе, 0..1.
+            Выходы:
+                None - чекпоинт transformer_epoch_{epoch}.pt записывается в checkpoint_dir (только rank 0).
+    """
     global last_save, config, cold_save_counter
     os.makedirs("./cold_saves/", exist_ok=True)
     if rank != 0:
@@ -117,6 +157,14 @@ def save(transformer, epoch, optimizer, scheduler, train_loss=0, val_loss="NaN",
 
 
 def snapshot_state(model, optimizer):
+    """Делает снимок текущего состояния модели и оптимизатора для возможности отката.
+            Входы:
+                model (DDP|Transformer) - модель;
+                optimizer (Optimizer) - оптимизатор.
+            Выходы:
+                model_state (dict) - глубокая копия словаря состояний модели;
+                optimizer_state (dict) - глубокая копия состояния оптимизатора.
+    """
     module = model.module if hasattr(model, "module") else model
     model_state = {k: v.detach().clone() for k, v in module.state_dict().items()}
     optimizer_state = copy.deepcopy(optimizer.state_dict())
@@ -124,6 +172,14 @@ def snapshot_state(model, optimizer):
 
 
 def restore_state(model, optimizer, snapshot):
+    """Восстанавливает состояние модели и оптимизатора из ранее сделанного снимка.
+            Входы:
+                model (DDP|Transformer) - модель;
+                optimizer (Optimizer) - оптимизатор;
+                snapshot (tuple) - результат snapshot_state.
+            Выходы:
+                None - веса и состояние оптимизатора переписываются.
+    """
     model_state, optimizer_state = snapshot
     module = model.module if hasattr(model, "module") else model
     module.load_state_dict(model_state)
@@ -133,6 +189,23 @@ def restore_state(model, optimizer, snapshot):
 def train_epoch(model, loader, optimizer, scheduler, criterion, device, num,
                  accumulation_steps=12, clip_window=30, clip_mult=1.25, clip_default=3,
                  snapshot_interval=100):
+    """Обучение одной эпохи: двунаправленные fwd/bwd-потери, градиентное накопление, адаптивный клип, защита от NaN с откатом.
+            Входы:
+                model (DDP) - модель;
+                loader (DataLoader) - обучающие батчи;
+                optimizer (Optimizer) - оптимизатор;
+                scheduler (LambdaLR) - расписание lr;
+                criterion (nn.Module) - функция потерь;
+                device (str) - устройство;
+                num (int) - номер эпохи (для прогресс-бара);
+                accumulation_steps (int) - шаги накопления градиентов;
+                clip_window (int) - окно для среднего градиентного клипа;
+                clip_mult (float) - множитель к среднему клипу;
+                clip_default (float) - клип, пока окно не заполнено;
+                snapshot_interval (int) - период обновления снимка для отката.
+            Выходы:
+                avg_loss (float) - средняя потеря за эпоху.
+    """
     model.train()
     total_loss = 0.0
     accum_loss = 0.0
@@ -271,6 +344,17 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, num,
 
 
 def evaluate(model, loader, criterion, device):
+    """Валидация: средняя потеря в обоих направлениях (fwd: src->tgt и bwd: tgt->src) без обратного прохода.
+            Входы:
+                model (Transformer|DDP) - модель;
+                loader (DataLoader) - валидационные батчи;
+                criterion (nn.Module) - функция потерь (ignore_index = pad);
+                device (str) - устройство.
+            Выходы:
+                avg_loss (float) - средняя суммарная потеря;
+                fwd_loss (float) - прямая потеря;
+                bwd_loss (float) - обратная потеря.
+    """
     model.eval()
     pad_id = criterion.ignore_index
     fwd_loss_sum = 0.0

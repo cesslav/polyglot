@@ -43,6 +43,12 @@ _cometkiwi_model = None
 
 
 def _get_lid_model():
+    """Ленивая загрузка fastText-модели определения языка (однократно, путь берётся из FILTER_CONFIG["langid"]["model_path"]).
+            Входы:
+                None.
+            Выходы:
+                model (fasttext.FastText) - модель для предсказания языка текста.
+    """
     global _lid_model
     if _lid_model is None:
         import fasttext
@@ -52,6 +58,12 @@ def _get_lid_model():
 
 
 def _get_labse_model():
+    """Ленивая загрузка LaBSE-модели эмбеддингов предложений (однократно, имя модели берётся из FILTER_CONFIG["labse"]["model_name"]).
+            Входы:
+                None.
+            Выходы:
+                model (SentenceTransformer) - модель LaBSE.
+    """
     global _labse_model
     if _labse_model is None:
         from sentence_transformers import SentenceTransformer
@@ -60,6 +72,12 @@ def _get_labse_model():
 
 
 def _get_labse_pool():
+    """Ленивое создание мультипроцессного пула LaBSE (до 2 GPU или CPU) для параллельного encode (устройства определяются автоматически).
+            Входы:
+                None.
+            Выходы:
+                pool (MultiProcessPool) - пул процессов sentence-transformers для массовых эмбеддингов.
+    """
     global _labse_pool
     if _labse_pool is None:
         num_gpus = torch.cuda.device_count()
@@ -69,6 +87,12 @@ def _get_labse_pool():
 
 
 def _stage1_length_ratio(example):
+    """Этап 1 фильтрации: ограничение длины (в токенах) и соотношения длин исходника и перевода (в символах).
+            Входы:
+                example (dict) - запись датасета с полями input/output (токены) и src_text/tgt_text (тексты).
+            Выходы:
+                keep (bool) - True, если пара проходит фильтры длины и length_ratio.
+    """
     cfg = FILTER_CONFIG["length"]
     if cfg["enabled"]:
         if len(example["input"]) > cfg["max_tokens"] or len(example["output"]) > cfg["max_tokens"]:
@@ -88,6 +112,12 @@ def _stage1_length_ratio(example):
 
 
 def _stage2_langid(example):
+    """Этап 2 фильтрации: проверка языка исходника и перевода fastText-классификатором.
+            Входы:
+                example (dict) - запись с текстами src_text и tgt_text.
+            Выходы:
+                keep (bool) - True, если язык исходника равен src_lang, а перевода — tgt_lang из FILTER_CONFIG.
+    """
     model = _get_lid_model()
     src_clean = example["src_text"].replace("\n", " ").strip()
     tgt_clean = example["tgt_text"].replace("\n", " ").strip()
@@ -99,6 +129,12 @@ def _stage2_langid(example):
 
 
 def _stage3_labse(batch):
+    """Этап 3 фильтрации (батчевый): косинусная близость LaBSE-эмбеддингов пары выше порога.
+            Входы:
+                batch (dict) - батч записей со списками src_text/tgt_text.
+            Выходы:
+                keep (list[bool]) - по одной метке на пару: True, если cos-сходство >= min_cosine.
+    """
     model = _get_labse_model()
     src_emb = model.encode(batch["src_text"], normalize_embeddings=True, show_progress_bar=False, convert_to_numpy=True)
     tgt_emb = model.encode(batch["tgt_text"], normalize_embeddings=True, show_progress_bar=False, convert_to_numpy=True)
@@ -107,6 +143,12 @@ def _stage3_labse(batch):
 
 
 def _run_labse_bulk(dataset):
+    """Массовая фильтрация датасета по LaBSE-сходству с мультитредовым пулом и чанковой обработкой.
+            Входы:
+                dataset (datasets.Dataset) - токенизированный датасет со столбцами src_text/tgt_text.
+            Выходы:
+                dataset (datasets.Dataset) - отфильтрованный датасет (только пары с cos-сходством >= min_cosine).
+    """
     model = _get_labse_model()
     pool = _get_labse_pool()
     cfg = FILTER_CONFIG["labse"]
@@ -130,6 +172,13 @@ def _run_labse_bulk(dataset):
 
 
 def tokenization_wmt(example, num):
+    """Токенизация пары предложений из WMT19 (русская/английская части поля translation).
+            Входы:
+                example (dict) - запись wmt/wmt19;
+                num (int) - индекс (не используется, нужен для map).
+            Выходы:
+                result (dict) - input/output (массивы uint16, padding до 512) и src_text/tgt_text (исходные строки).
+    """
     src_text = example["translation"][SRC_LANG[0:2]]
     tgt_text = example["translation"][TGT_LANG[0:2]]
     return {
@@ -143,6 +192,13 @@ def tokenization_wmt(example, num):
 
 
 def tokenization_fine(example, num):
+    """Токенизация пары из FineTranslations; пары с качеством <= 0.5 заменяются pad-заглушкой.
+            Входы:
+                example (dict) - запись finetranslations (og_full_text, translated_text, og_quality_score);
+                num (int) - индекс.
+            Выходы:
+                result (dict) - input/output (uint16, длина 512 либо 512+1 для pad) и src_text/tgt_text (пустые для отбракованных).
+    """
     src_text = example["og_full_text"]
     tgt_text = example["translated_text"]
     coef = 1 if example["og_quality_score"] > 0.5 else 0
@@ -161,6 +217,13 @@ def tokenization_fine(example, num):
 
 
 def tokenization_flores(example, num):
+    """Токенизация пары из FLORES+ по глобальным ds/pairs: берёт n-й текст исходного и целевого датасетов.
+            Входы:
+                example (any) - не используется;
+                num (int) - индекс пары в глобальных списках ds[pairs[0]]/ds[pairs[1]].
+            Выходы:
+                result (dict) - input/output (uint16, padding до 512) и src_text/tgt_text.
+    """
     src_text = ds[pairs[0]][num]["text"]
     tgt_text = ds[pairs[1]][num]["text"]
     return {
@@ -174,6 +237,13 @@ def tokenization_flores(example, num):
 
 
 def tokenization_tatoeba(example, num):
+    """Токенизация пары из Tatoeba; при обратном порядке языков стороны меняются местами, чужие пары — pad-заглушка.
+            Входы:
+                example (dict) - запись Tatoeba-Translations (lang_src, lang_tgt, sentence_src, sentence_tgt);
+                num (int) - индекс.
+            Выходы:
+                result (dict) - input/output (uint16, padding до 512) и src_text/tgt_text в направлении SRC->TGT.
+    """
     lang_src = example["lang_src"]
     lang_tgt = example["lang_tgt"]
     if lang_src == SRC_LANG[0:3] and lang_tgt == TGT_LANG[0:3]:
@@ -194,12 +264,26 @@ def tokenization_tatoeba(example, num):
 
 
 def _non_pad_count(ids):
+    """Подсчёт количества непустых (не PAD) токенов в последовательности.
+            Входы:
+                ids (list|ndarray) - список или ndarray идентификаторов токенов.
+            Выходы:
+                count (int) - число токенов, отличных от PAD_ID.
+    """
     if isinstance(ids, list):
         return len(ids) - ids.count(PAD_ID)
     return int((np.asarray(ids) != PAD_ID).sum())
 
 
 def apply_quality_filters(dataset, num_proc_cheap=20, skip_model_filters=False):
+    """Прогоняет токенизированный датасет через включённые этапы фильтрации (длина/langid/LaBSE) и готовит к обучению.
+            Входы:
+                dataset (datasets.Dataset) - токенизированный датасет;
+                num_proc_cheap (int) - число процессов для дешёвых фильтров;
+                skip_model_filters (bool) - зарезервированный флаг пропуска модельных фильтров.
+            Выходы:
+                dataset (datasets.Dataset) - очищенный датасет в torch-формате со столбцами input/output.
+    """
     print(f"Входной размер: {len(dataset)}")
     if FILTER_CONFIG["length"]["enabled"]:
         dataset = dataset.filter(_stage1_length_ratio, num_proc=num_proc_cheap)

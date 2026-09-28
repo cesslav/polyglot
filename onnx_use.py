@@ -7,24 +7,51 @@ from transformers import AutoTokenizer
 
 
 def np_softmax(x):
+    """Численно устойчивый softmax по последнему измерению (на numpy).
+            Входы:
+                x (ndarray) - тензор logits.
+            Выходы:
+                result (ndarray) - вероятностное распределение той же формы.
+    """
     x = x - np.max(x, axis=-1, keepdims=True)
     exp = np.exp(x)
     return exp / np.sum(exp, axis=-1, keepdims=True)
 
 
 class ONNXTransformer:
+    """Обёртка над ONNX-сессиями кодера и декодера для инференса на CPU.
+            Конструктор:
+                encoder_path (str) - путь к encoder.onnx;
+                decoder_path (str) - путь к decoder.onnx.
+    """
+
     def __init__(self, encoder_path, decoder_path):
         providers = ["CPUExecutionProvider"]
         self.encoder = ort.InferenceSession(encoder_path, providers=providers)
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
     def encode(self, src, src_mask):
+        """Прогоняет исходную последовательность через ONNX-кодер.
+                Входы:
+                    src (ndarray int64) - id токенов (batch, seq);
+                    src_mask (ndarray bool) - маска не-pad.
+                Выходы:
+                    memory (ndarray float32) - память кодера (batch, seq, d_model).
+        """
         return self.encoder.run(["memory"], {
             "src": src.astype(np.int64),
             "src_mask": src_mask,
         })[0]
 
     def decode(self, tgt, memory, src_mask):
+        """Прогоняет целевую последовательность через ONNX-декодер с головкой.
+                Входы:
+                    tgt (ndarray int64) - id токенов (batch, tgt_seq);
+                    memory (ndarray float32) - память кодера;
+                    src_mask (ndarray bool) - маска исходного текста.
+                Выходы:
+                    logits (ndarray float32) - logits (batch, tgt_seq, vocab_size).
+        """
         return self.decoder.run(["logits"], {
             "tgt": tgt.astype(np.int64),
             "memory": memory.astype(np.float32),
@@ -33,6 +60,18 @@ class ONNXTransformer:
 
 
 def beam_search_stream(model, tokenizer, src, src_mask, beam_size=4, max_len=128):
+    """Стриминговый beam search по ONNX-модели: генератор частичных переводов, финальная статистика — в StopIteration.
+            Входы:
+                model (ONNXTransformer) - модель;
+                tokenizer (AutoTokenizer) - токенизатор;
+                src (Tensor|ndarray) - id входных токенов;
+                src_mask (ndarray bool) - маска не-pad;
+                beam_size (int) - ширина луча;
+                max_len (int) - максимальная длина перевода.
+            Выходы:
+                current_text (str) - текущий лучший перевод после каждого шага (yield);
+                result (tuple) - в e.value при завершении: (полный текст, число токенов, число символов, время в секундах).
+    """
     np.log_softmax = lambda x, axis: np.log(np_softmax(x))
     bos, eos = 0, 1
 
@@ -78,6 +117,16 @@ def beam_search_stream(model, tokenizer, src, src_mask, beam_size=4, max_len=128
 
 
 def print_stats(num_in_tokens, padding, num_out_tokens, num_chars, elapsed):
+    """Выводит в консоль строку статистики производительности перевода.
+            Входы:
+                num_in_tokens (int) - число входных токенов;
+                padding (int) - длина после padding;
+                num_out_tokens (int) - число выданных токенов;
+                num_chars (int) - число символов перевода;
+                elapsed (float) - время генерации, с.
+            Выходы:
+                None - строка статистики печатается в stdout.
+    """
     tok_per_sec = num_out_tokens / elapsed if elapsed > 0 else 0
     char_per_sec = num_chars / elapsed if elapsed > 0 else 0
     print(

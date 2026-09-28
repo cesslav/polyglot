@@ -317,12 +317,24 @@ HTML = """
 
 
 def np_softmax(x):
+    """Численно устойчивый softmax по последнему измерению (на numpy).
+            Входы:
+                x (ndarray) - тензор logits.
+            Выходы:
+                result (ndarray) - вероятностное распределение той же формы.
+    """
     x = x - np.max(x, axis=-1, keepdims=True)
     exp = np.exp(x)
     return exp / np.sum(exp, axis=-1, keepdims=True)
 
 
 def list_model_dirs():
+    """Список каталогов моделей в MODELS_DIR (по алфавиту).
+            Входы:
+                None - каталог берётся из глобального MODELS_DIR.
+            Выходы:
+                dirs (list[str]) - имена подкаталогов; пустой список, если каталога нет.
+    """
     if not os.path.isdir(MODELS_DIR):
         return []
     return sorted(
@@ -332,6 +344,12 @@ def list_model_dirs():
 
 
 def read_model_config(model_dir_name: str) -> dict:
+    """Читает model_config.json каталога модели.
+            Входы:
+                model_dir_name (str) - имя каталога модели внутри MODELS_DIR.
+            Выходы:
+                config (dict) - конфигурация модели; пустой dict, если файла нет или он повреждён.
+    """
     path = os.path.join(MODELS_DIR, model_dir_name, "model_config.json")
     if os.path.isfile(path):
         try:
@@ -343,6 +361,13 @@ def read_model_config(model_dir_name: str) -> dict:
 
 
 def make_display_name(dir_name: str, cfg: dict) -> str:
+    """Отображаемое имя модели: «SRC -> TGT» (или «<->» для двунаправленной) из конфигурации, иначе имя каталога.
+            Входы:
+                dir_name (str) - имя каталога модели;
+                cfg (dict) - её model_config.json.
+            Выходы:
+                name (str) - имя для выпадающего списка интерфейса.
+    """
     src   = cfg.get("input_language",  "").strip().upper()
     tgt   = cfg.get("output_language", "").strip().upper()
     bidir = cfg.get("bidirectional", False)
@@ -353,6 +378,11 @@ def make_display_name(dir_name: str, cfg: dict) -> str:
 
 
 class ONNXTransformer:
+    """Обёртка над ONNX-сессиями кодера и декодера одной модели из каталога.
+            Конструктор:
+                model_dir (str) - каталог с encoder.onnx, decoder.onnx и токенизатором.
+    """
+
     def __init__(self, model_dir):
         providers = ["CPUExecutionProvider"]
         encoder_path = os.path.join(model_dir, "encoder.onnx")
@@ -361,12 +391,27 @@ class ONNXTransformer:
         self.decoder = ort.InferenceSession(decoder_path, providers=providers)
 
     def encode(self, src, src_mask):
+        """Прогоняет исходную последовательность через ONNX-кодер.
+                Входы:
+                    src (ndarray int64) - id токенов;
+                    src_mask (ndarray bool) - маска не-pad.
+                Выходы:
+                    memory (ndarray float32) - память кодера.
+        """
         return self.encoder.run(["memory"], {
             "src": src.astype(np.int64),
             "src_mask": src_mask
         })[0]
 
     def decode(self, tgt, memory, src_mask):
+        """Прогоняет целевую последовательность через ONNX-декодер с головкой.
+                Входы:
+                    tgt (ndarray int64) - id токенов;
+                    memory (ndarray float32) - память кодера;
+                    src_mask (ndarray bool) - маска.
+                Выходы:
+                    logits (ndarray float32) - logits по словарю.
+        """
         return self.decoder.run(["logits"], {
             "tgt": tgt.astype(np.int64),
             "memory": memory.astype(np.float32),
@@ -375,6 +420,13 @@ class ONNXTransformer:
 
 
 def get_model(name: str):
+    """Ленивая загрузка модели с кэшированием: при первом обращении читает токенизатор и ONNX-сессии.
+            Входы:
+                name (str) - имя каталога модели.
+            Выходы:
+                tokenizer (AutoTokenizer) - токенизатор;
+                model (ONNXTransformer) - модель (из кэша или freshly загруженные).
+    """
     if name not in _model_cache:
         model_dir = os.path.join(MODELS_DIR, name)
         tokenizer_dir = os.path.join(model_dir, "tokenizer")
@@ -386,6 +438,16 @@ def get_model(name: str):
 
 
 def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
+    """Beam search по ONNX-модели: кодирует вход, генерирует до eos и декодирует лучший луч.
+            Входы:
+                model (ONNXTransformer) - модель;
+                tokenizer (AutoTokenizer) - токенизатор;
+                src (Tensor|ndarray) - id входных токенов;
+                beam_size (int) - ширина луча;
+                max_len (int) - максимальная длина перевода.
+            Выходы:
+                translation (str) - итоговый перевод.
+    """
     np.log_softmax = lambda x, axis: np.log(np_softmax(x))
     bos, eos = 0, 1
     src_np = src.cpu().numpy() if hasattr(src, "cpu") else np.array(src)
@@ -417,11 +479,23 @@ def beam_search_onnx(model, tokenizer, src, beam_size=4, max_len=128):
 
 @app.route("/")
 def index():
+    """GET / — главная страница веб-переводчика (встроенный HTML-шаблон).
+            Входы:
+                None.
+            Выходы:
+                page (str) - HTML-страница интерфейса.
+    """
     return render_template_string(HTML)
 
 
 @app.route("/logo")
 def logo():
+    """GET /logo — отдаёт логотип проекта polylogo.png.
+            Входы:
+                None - путь к файлу вычисляется от расположения скрипта.
+            Выходы:
+                file (response) - файл-ответ с изображением; 404, если файла нет.
+    """
     logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polylogo.png")
     if not os.path.isfile(logo_path):
         return "", 404
@@ -430,6 +504,12 @@ def logo():
 
 @app.route("/api/models")
 def api_models():
+    """GET /api/models — список моделей для выпадающего списка (id каталога + отображаемое имя).
+            Входы:
+                None.
+            Выходы:
+                response (dict) - JSON {"models": [{"id": ..., "name": ...}, ...]}.
+    """
     models = []
     for d in list_model_dirs():
         cfg  = read_model_config(d)
@@ -440,6 +520,12 @@ def api_models():
 
 @app.route("/api/translate", methods=["POST"])
 def api_translate():
+    """POST /api/translate — перевод текста выбранной моделью.
+            Входы:
+                JSON-тело (dict) - {"text": str, "model": str}, текст и имя модели.
+            Выходы:
+                response (dict) - JSON {"translation": str}; ошибки: 400 (нет модели), 404 (модель не найдена), 500 (сбой загрузки).
+    """
     data = request.get_json(silent=True) or {}
     text = data.get("text", "").strip()
     model_name = data.get("model", "")
@@ -465,11 +551,23 @@ def api_translate():
 
 @app.route("/api/news")
 def api_news():
+    """GET /api/news — карточки раздела «О проекте» для главной страницы.
+            Входы:
+                None - данные берутся из глобального NEWS.
+            Выходы:
+                response (dict) - JSON {"news": [{"title", "body", ...}, ...]}.
+    """
     return jsonify({"news": NEWS})
 
 
 @app.route("/favicon.ico")
 def favicon():
+    """GET /favicon.ico — иконка сайта (polylogo.ico).
+            Входы:
+                None.
+            Выходы:
+                file (response) - файл-ответ с иконкой.
+    """
     return send_from_directory("./", "polylogo.ico")
 
 
