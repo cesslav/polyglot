@@ -1,0 +1,60 @@
+=====================================================================
+ ИСТОРИЯ КОММИТОВ РЕПОЗИТОРИЯ
+=====================================================================
+
+aec46d4a1f191520d768cb3d6abb2bab46436679  29-09-2026  v9.2  - comments added for all classes  - comments added for all functions
+fcf150830e3a891ee43d16d297ead4234181e368  23-07-2026  v9.2  - EOL standart train script  - requirements.txt update  - (beta) proxy soppurt for telegram bot script  - minor bug fix
+89f02b261acc33092156270ff194948f2caf2a2c  17-07-2026  v9.2  - Docs update.
+37479c00fe4769fac94c216260f3b5ef57d019ae  15-07-2026  v9.2  - BLEU compare mode  - Better quantization configurtion  - (beta) inline-case tokenizer  - Minor bug fix
+19d826c385e27e62712781759882464ab5a265b4  06-07-2026  v9.1  - a rollback system has been added in case of training failures  - added dataset filtering during pretokenization  - minor architecture optimization  - LWLR system fix
+55e4e5201eb3ea228a8b3f3df0239179ce0d7185  16-06-2026  v9  - inference scripts update for new architecture  - minor bug fixes
+eeb2145569f624e71f4f3c7a3cc91bfa2ad98f32  12-06-2026  v9 beta update  - Architecture update  - instruments update for new architecture  - minor bug fixes
+58a7a5f7af7d3222d6215be5514352217e919412  07-06-2026  v8.1 update  - Docs update
+c1013d4d6d943cb32cd47cd7b782718c68d8ff7b  07-06-2026  v8.1 update  - Docs update
+45d2e873d5bce2040abd54636718fb5d755f82db  07-06-2026  v8.1 update  - Docs update
+a95e0feec70f57de1ea58f552ac83d824e2b3ef1  25-05-2026  v8.1 update  - Desktop app release.  - Readme correction  - Configuration file type changed from txt to json
+4d2507ebe23261fda37f925589b081f1b9bb6ec7  23-05-2026  v8.1 update  - Desktop app release.  - Readme correction  - Configuration file type changed from txt to json
+a5e937b6966ac6dc155279f59fdf699d2a0648f5  22-05-2026  v8.1 update  - Distributed train via network optimization
+92f2d0975d3821c11d8631ed334e240cecb34867  21-05-2026  v8.1 update  - Distributed train via network optimization
+074f005443d77c79e921b76f7dce62e51eb219c8  20-05-2026  v8.1 update  - Distributed train added;  - Code restyling;  - Minor bugfixes.
+1438f8dd5170b9d276f10b74039d0088858c3bb2  20-05-2026  v8.1 update  - Distributed train added;  - Code restyling;  - Minor bugfixes.
+c94edbe75b1c180374282364e9f7dff095ec9679  18-05-2026  v8.1 update  - Distributed train added;  - Code restyling;  - Minor bugfixes.
+0a75073294601082008757a94f4cfac9fa111673  17-05-2026  v8.1 update  - Distributed train added;  - Code restyling;  - Minor bugfixes.
+f67ff4f2fbf8dcb1e72ba2cd5747a5b2e48476ef  07-05-2026   - v8 update  Minor Bug Fixes
+5d5d5c5b6f65358f2b47e07b864b849bcf31ccb3  04-05-2026   - v8 update  Minor Bug Fixes
+b1d049f2d294425815adfcc0aa27bede40796272  04-05-2026  Merge remote-tracking branch 'origin/main'
+fe1cd3a0df097dc8d1e86972a3eca2fa47fe3940  04-05-2026   - v8 update  Minor Bug Fixes
+6b71165e3aadba1f17e82b39ceda7a5f4c915b06  04-05-2026  Update README.md
+34f67140ef8c1e19169718e1ef814c8ca0c4a440  04-05-2026  Merge remote-tracking branch 'origin/main'
+2e7d3c9bafbd0ac9006fd79dc5fed64ba488b1ff  04-05-2026   - v8 update  Minor Bug Fixes
+1480a162171c59382072a483c89bfe12696ac612  04-05-2026  Delete test.py
+7003bbe1ae22ccb514682413286ba1f42d1191d3  02-05-2026   - v8 update  Minor Bug Fixes
+148c0b2b58a00cf8fe4dec567bb63326e20b3399  06-04-2026   - v8 update  Minor Bug Fixes
+096c6e0bf85f90d9223b6734b8c331b89cbdcbd7  05-04-2026   - v8 update  README added
+f8f74304c57c78eb72b433b79deeac310aae4d00  04-04-2026   - v8 update  README added
+d0da2540342add7711d823b4a98fdfd5e55fb8e0  04-04-2026   - v8 update  README added
+abdb0be71548933f0631b5a60e30c26c0608ee5b  04-04-2026   - v8 update  README added
+7b9c6df666bd1daf32795596ba031bc3d71d3f0d  04-04-2026   - v8 update  README added
+913ae81532daf56e1c5c7ab98dab2e06d22847e9  04-04-2026   - v8 update  README added
+0fd1a9459e25b11c39197194c70ee9c007e13c34  04-04-2026   - v8 update  README added
+adb979046439aedbaa30c6819973793e7269da3a  04-04-2026   - v8 update
+745824f144c38edf49c304bcbc632d4acee141b4  04-04-2026  Merge remote-tracking branch 'origin/main'
+0273162b2242de5be5199313ac24291688805098  04-04-2026   - v8 update
+37db6aa8af7af38985bc8856b5061edbc4fbb504  04-04-2026  Create LICENSE
+3208d7e02e7fda011c268141bda44ef138e50e36  04-04-2026   - v8 update
+5cbc72999dc3a9d37238b099b91fc4d2d46b7c0d  04-04-2026   - v8 update
+5eb28b8dd9fa27cff87740922c9c11f0746bd986  04-04-2026   - v8 update
+58c8a3f3f84d6958955da18cd1b46aa4363a78be  04-04-2026   - v8 update
+c60a5b360a74c2f27b7beb3678e85bfa34a6c1e1  04-04-2026   - v8 update
+91cb53409e9fd6f94a855c55f8236b12dbd0a577  04-04-2026   - v8 update
+f43e4f12d18212fea54bdeb87e0e78dbf78427b2  04-04-2026   - v8 update
+c4604af61b5c4b266cbd568272d144d71ad4cbfa  04-04-2026   - v8 update
+29ada78b330a49465d70c1c100d3cff6e748f8d6  04-04-2026   - v8 update
+e5935487471e2cfb8c1f7b26dbacf61ce51a6e27  04-04-2026   - v8 update
+34db484b62088cf7a8a265013c1d156d5e300f8b  04-04-2026   - v8 update
+2c3f82884281ca7aff17430a15be05a34159d1a8  03-04-2026   - v8 update
+e765a5c30383f908782552b7cab77a07f69ba2c5  03-04-2026   - v8 update
+29129393887d8c54695b0245cc094685cdd163f9  11-08-2025   - DDP  - pipeline
+a683b27b0d77e226cc37ce34da85ce772fc6bda1  10-08-2025   - model implementation and training loop division
+bc88424eac5632ada551e41545ab374703051356  10-08-2025   - transformer implementation  - learning loop  - managing legacy
+f2978f7a2ee497e2311b843f52486a4b1a683d03  09-02-2025  Add files via upload
